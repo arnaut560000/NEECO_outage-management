@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audit Logs | Outage Management System</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="admin-page">
+    <header class="topbar compact-topbar admin-page-topbar">
+        <div class="admin-topbar-shell">
+            <div class="topbar-main-row admin-topbar-row">
+                <div class="admin-heading-block">
+                    <h1 class="admin-page-title">Audit Logs</h1>
+                    <p class="admin-page-subtitle">Review authentication, upload, export, interruption, and user-management activity.</p>
+                </div>
+                <div class="auth-strip">
+                    <a href="{{ url_for('index') }}" class="secondary-action auth-action-btn admin-nav-link">Back to System</a>
+                    {% if current_permissions.can_manage_users %}
+                    <a href="{{ url_for('admin_users') }}" class="secondary-action auth-action-btn admin-nav-link">Manage Users</a>
+                    <a href="{{ url_for('admin_system_status') }}" class="secondary-action auth-action-btn admin-nav-link">System Status</a>
+                    {% endif %}
+                    <div class="user-chip">
+                        <span class="user-chip-label">Signed in as</span>
+                        <strong class="user-chip-name">{{ current_user.username }}</strong>
+                        <span class="role-badge role-{{ current_user.role }}">{{ current_user.role|capitalize }}</span>
+                    </div>
+                    <form method="post" action="{{ url_for('logout') }}" class="logout-form">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="secondary-action auth-action-btn">Logout</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="admin-users-shell">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="admin-alert-stack">
+                    {% for category, message in messages %}
+                        <div class="admin-alert {{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        <section class="admin-users-card admin-section-card">
+            <div class="admin-card-head">
+                <div>
+                    <h2>Filter Audit Logs</h2>
+                    <p>Filter by date range, username, or action type. Up to 500 recent records are shown.</p>
+                </div>
+            </div>
+            <form method="get" action="{{ url_for('audit_logs') }}" class="admin-create-form audit-filter-form">
+                <label>
+                    <span>Date From</span>
+                    <input type="date" name="date_from" value="{{ filters.date_from }}">
+                </label>
+                <label>
+                    <span>Date To</span>
+                    <input type="date" name="date_to" value="{{ filters.date_to }}">
+                </label>
+                <label>
+                    <span>Username</span>
+                    <input type="text" name="username" value="{{ filters.username }}" placeholder="Filter by username">
+                </label>
+                <label>
+                    <span>Action</span>
+                    <select name="action">
+                        <option value="">All actions</option>
+                        {% for action in audit_actions %}
+                        <option value="{{ action }}" {% if filters.action == action %}selected{% endif %}>{{ action }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <div class="audit-filter-actions">
+                    <button type="submit" class="primary-action">Apply Filters</button>
+                    <a href="{{ url_for('audit_logs') }}" class="secondary-action auth-action-btn">Clear</a>
+                </div>
+            </form>
+        </section>
+
+        {% if can_manage_audit_logs %}
+        <section class="admin-users-card admin-section-card audit-maintenance-card">
+            <div class="admin-card-head">
+                <div>
+                    <h2>Audit Maintenance</h2>
+                    <p>Admin-only cleanup tools for keeping the audit log table lean in production.</p>
+                </div>
+            </div>
+            <div class="audit-maintenance-grid">
+                <form method="post" action="{{ url_for('audit_logs_prune') }}" class="audit-maintenance-panel">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <div class="audit-maintenance-copy">
+                        <h3>Prune Old Audit Logs</h3>
+                        <p>Uses the current retention settings and max-row limit to remove the oldest audit rows first.</p>
+                    </div>
+                    <button type="submit" class="primary-action">Prune Old Audit Logs</button>
+                </form>
+
+                <form method="post" action="{{ url_for('audit_logs_delete_all') }}" class="audit-maintenance-panel audit-maintenance-danger">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <div class="audit-maintenance-copy">
+                        <h3>Delete All Audit Logs</h3>
+                        <p>This deletes only audit log rows, then runs SQLite cleanup. Users, interruptions, and workspace data are not affected.</p>
+                    </div>
+                    <label>
+                        <span>Type DELETE to confirm</span>
+                        <input type="text" name="confirmation" placeholder="DELETE" autocomplete="off" required>
+                    </label>
+                    <button type="submit" class="danger-action">Delete All Audit Logs</button>
+                </form>
+            </div>
+        </section>
+        {% endif %}
+
+        <section class="admin-users-card admin-section-card">
+            <div class="admin-card-head">
+                <div>
+                    <h2>Audit Trail</h2>
+                    <p>Passwords are never recorded. Details are stored as structured JSON for operational review.</p>
+                </div>
+            </div>
+            <div class="table-wrap admin-users-table-wrap">
+                <table class="affected-table admin-users-table audit-log-table">
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Username</th>
+                            <th>Role</th>
+                            <th>Action</th>
+                            <th>Details</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if logs %}
+                            {% for log in logs %}
+                            <tr>
+                                <td>{{ log.timestamp }}</td>
+                                <td>{{ log.username }}</td>
+                                <td><span class="role-badge role-{{ log.role }}">{{ log.role }}</span></td>
+                                <td><code class="audit-action-code">{{ log.action_type }}</code></td>
+                                <td>
+                                    {% if log.details %}
+                                    <pre class="audit-details">{{ log.details | tojson(indent=2) }}</pre>
+                                    {% else %}
+                                    <span class="admin-inline-note">No details</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="5">No audit logs matched the selected filters.</td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+</body>
+</html>

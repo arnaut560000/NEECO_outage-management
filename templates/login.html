@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login | Outage Management System</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-page">
+    <main class="login-shell">
+        <section class="login-card login-card-refined">
+            <div class="login-brand">
+                <span class="login-eyebrow">Secure Access</span>
+                <h1>Outage Management System</h1>
+                <p>Sign in with your company account to upload feeder data, review validation, and export outage results.</p>
+            </div>
+
+            {% if seed_admin_info.created and is_development %}
+            <div class="login-seed-note">
+                <strong>Initial admin account created.</strong>
+                <span>Username: {{ seed_admin_info.username }} | Password: {{ seed_admin_info.password }}</span>
+                <small>Visible only in development mode. Change this account after your first login.</small>
+            </div>
+            {% endif %}
+
+            {% if error_message %}
+            <div class="login-error">{{ error_message }}</div>
+            {% endif %}
+
+            <form method="post" action="{{ url_for('login', next=next_url) }}" class="login-form">
+                <input type="hidden" name="next" value="{{ next_url }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <label>
+                    <span>Username</span>
+                    <input type="text" name="username" placeholder="Enter username" autocomplete="username" required>
+                </label>
+                <label>
+                    <span>Password</span>
+                    <input type="password" name="password" placeholder="Enter password" autocomplete="current-password" required>
+                </label>
+                <button type="submit" class="primary-action login-submit">Log In</button>
+            </form>
+
+            <div class="login-footer-note">
+                <p>Roles supported: Admin, Supervisor, Operator, Viewer.</p>
+                <p>Viewer accounts are read-only and cannot upload or export data.</p>
+            </div>
+        </section>
+    </main>
+</body>
+</html>

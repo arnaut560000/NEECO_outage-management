@@ -1,0 +1,229 @@
+import importlib
+import os
+import shutil
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+
+class OutageAppTestCase(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp(prefix="outage-tests-")
+        self.env_backup = {key: os.environ.get(key) for key in self._env_overrides()}
+        for key, value in self._env_overrides().items():
+            os.environ[key] = value
+        self.app_module = self._load_app_module()
+        self.client = self.app_module.app.test_client()
+
+    def tearDown(self):
+        for module_name in ("app", "config"):
+            sys.modules.pop(module_name, None)
+        for key, previous_value in self.env_backup.items():
+            if previous_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = previous_value
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def _env_overrides(self):
+        return {
+            "OUTAGE_ENV": "development",
+            "OUTAGE_DEBUG": "0",
+            "OUTAGE_AUTO_SEED_ADMIN": "0",
+            "OUTAGE_SHOW_SEED_CREDENTIALS": "0",
+            "OUTAGE_DB_PATH": os.path.join(self.temp_dir, "users.sqlite3"),
+            "OUTAGE_BACKUP_DIR": os.path.join(self.temp_dir, "backups"),
+            "OUTAGE_WORKSPACE_CACHE_DIR": os.path.join(self.temp_dir, "workspace_cache"),
+            "OUTAGE_SECRET_KEY": "test-secret-key-that-is-long-enough",
+        }
+
+    def _load_app_module(self):
+        for module_name in ("app", "config"):
+            sys.modules.pop(module_name, None)
+        return importlib.import_module("app")
+
+    def _create_user(self, username, role="operator", password="Password123"):
+        return self.app_module.create_user(
+            self.app_module.app.config["AUTH_DB_PATH"],
+            username=username,
+            password=password,
+            role=role,
+        )
+
+    def _login_via_session(self, user_id, csrf_token="test-csrf-token"):
+        with self.client.session_transaction() as session:
+            session["user_id"] = user_id
+            session["_csrf_token"] = csrf_token
+        return csrf_token
+
+    def _extract_csrf_token(self):
+        self.client.get("/login")
+        with self.client.session_transaction() as session:
+            return session.get("_csrf_token")
+
+    def test_login_flow_succeeds_with_valid_csrf(self):
+        self._create_user("alice", role="operator", password="Password123")
+        csrf_token = self._extract_csrf_token()
+
+        response = self.client.post(
+            "/login",
+            data={
+                "username": "alice",
+                "password": "Password123",
+                "csrf_token": csrf_token,
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.headers["Location"].endswith("/"))
+        with self.client.session_transaction() as session:
+            self.assertIn("user_id", session)
+
+    def test_missing_csrf_blocks_workspace_clear(self):
+        user = self._create_user("operator-clear", role="operator")
+        self._login_via_session(user["id"])
+
+        response = self.client.post("/workspace/current/clear")
+
+        self.assertEqual(response.status_code, 400)
+        payload = response.get_json()
+        self.assertFalse(payload["success"])
+        self.assertIn("Security token missing or invalid", payload["message"])
+
+    def test_operator_cannot_view_audit_logs(self):
+        user = self._create_user("operator-audit", role="operator")
+        self._login_via_session(user["id"])
+
+        response = self.client.get("/audit-logs")
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_supervisor_can_view_but_not_manage_audit_logs(self):
+        user = self._create_user("supervisor-audit", role="supervisor")
+        csrf_token = self._login_via_session(user["id"])
+
+        view_response = self.client.get("/audit-logs")
+        manage_response = self.client.post(
+            "/audit-logs/prune",
+            data={"csrf_token": csrf_token},
+        )
+
+        self.assertEqual(view_response.status_code, 200)
+        self.assertEqual(manage_response.status_code, 403)
+        self.assertFalse(manage_response.get_json()["success"])
+
+    def test_records_delete_requires_delete_saved_records_permission(self):
+        record_owner = self._create_user("record-owner", role="operator")
+        viewer = self._create_user("record-viewer", role="viewer")
+        operator_csrf = self._login_via_session(record_owner["id"])
+
+        create_response = self.client.post(
+            "/interruptions",
+            json={
+                "name": "Test Interruption",
+                "start_date": "2026-04-06",
+                "start_time": "08:00",
+                "end_date": "2026-04-06",
+                "end_time": "09:00",
+                "target_name": "TAL001",
+                "affected_towers": [{"name": "TAL001"}],
+                "matched_rows": [{"pol_id": "TAL001", "account_number": "12-3456-7890", "kwhr": 10}],
+            },
+            headers={"X-CSRF-Token": operator_csrf},
+        )
+        interruption_id = create_response.get_json()["interruption"]["id"]
+
+        viewer_csrf = self._login_via_session(viewer["id"], csrf_token="viewer-csrf")
+        delete_response = self.client.post(
+            f"/records/interruptions/{interruption_id}/delete",
+            data={"csrf_token": viewer_csrf},
+        )
+
+        self.assertEqual(delete_response.status_code, 403)
+        self.assertFalse(delete_response.get_json()["success"])
+
+    def test_stale_workspace_metadata_is_repaired_when_cache_file_is_missing(self):
+        user = self._create_user("workspace-user", role="operator")
+        self.app_module.upsert_user_workspace(
+            user["id"],
+            feederFileName="sample.gpx",
+            network={
+                "towers": [{"name": "TAL001"}],
+                "lines": [{"from": 0, "to": 0}],
+                "validation": {"status": "ok", "summary": {}},
+                "is_inferred": False,
+            },
+            feederValidation={"status": "ok", "summary": {}},
+        )
+
+        cache_path = Path(self.app_module._workspace_cache_path(user["id"], "network"))
+        cache_path.unlink()
+
+        metadata = self.app_module.get_user_workspace_metadata(user["id"])
+        workspace = self.app_module.get_user_workspace(user["id"], include_payload=True)
+
+        self.assertIsNone(metadata["network"])
+        self.assertIsNone(workspace["network"])
+        with self.app_module.get_app_db_connection() as connection:
+            row = connection.execute(
+                "SELECT network_json, feeder_validation_json FROM user_workspace WHERE user_id = ?",
+                (user["id"],),
+            ).fetchone()
+        self.assertIsNone(row["network_json"])
+        self.assertIsNone(row["feeder_validation_json"])
+
+    def test_interruption_create_list_delete_and_export_flow(self):
+        user = self._create_user("operator-interrupt", role="operator")
+        csrf_token = self._login_via_session(user["id"])
+
+        create_response = self.client.post(
+            "/interruptions",
+            json={
+                "name": "Primary Outage",
+                "start_date": "2026-04-06",
+                "start_time": "08:00",
+                "end_date": "2026-04-06",
+                "end_time": "09:15",
+                "target_name": "TAL001",
+                "source_tower_clicked": "TAL000",
+                "affected_towers": [{"name": "TAL001"}],
+                "matched_rows": [
+                    {
+                        "pol_id": "TAL001",
+                        "account_number": "12-3456-7890",
+                        "consumer_name": "Test Consumer",
+                        "kwhr": 12.5,
+                    }
+                ],
+            },
+            headers={"X-CSRF-Token": csrf_token},
+        )
+
+        self.assertEqual(create_response.status_code, 200)
+        created_payload = create_response.get_json()
+        self.assertTrue(created_payload["success"])
+        interruption_id = created_payload["interruption"]["id"]
+
+        list_response = self.client.get("/interruptions")
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(len(list_response.get_json()["interruptions"]), 1)
+
+        export_response = self.client.get(f"/interruptions/{interruption_id}/export")
+        self.assertEqual(export_response.status_code, 200)
+        self.assertEqual(
+            export_response.headers["Content-Type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        delete_response = self.client.delete(
+            f"/interruptions/{interruption_id}",
+            headers={"X-CSRF-Token": csrf_token},
+        )
+        self.assertEqual(delete_response.status_code, 200)
+        self.assertTrue(delete_response.get_json()["success"])
+
+
+if __name__ == "__main__":
+    unittest.main()

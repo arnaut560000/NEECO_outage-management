@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Outage Management System</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="app-page">
+    <header class="topbar compact-topbar app-topbar">
+        <div class="app-topbar-shell">
+            <div class="topbar-main-row app-topbar-row">
+                <div class="topbar-title-block">
+                    <h1 class="app-page-title">Outage Management System</h1>
+                    <p class="app-page-subtitle">Upload feeder data, review validation, trace outages, and manage saved interruption records.</p>
+                </div>
+
+                <div class="auth-strip topbar-account-strip">
+                    {% if current_permissions.can_view_records %}
+                    <a href="{{ url_for('records_history') }}" class="secondary-action auth-action-btn admin-nav-link">Records / History</a>
+                    {% endif %}
+                    {% if current_permissions.can_manage_users %}
+                    <a href="{{ url_for('admin_users') }}" class="secondary-action auth-action-btn admin-nav-link">Manage Users</a>
+                    <a href="{{ url_for('admin_system_status') }}" class="secondary-action auth-action-btn admin-nav-link">System Status</a>
+                    {% endif %}
+                    {% if current_user.role in ['admin', 'supervisor'] %}
+                    <a href="{{ url_for('audit_logs') }}" class="secondary-action auth-action-btn admin-nav-link">Audit Logs</a>
+                    {% endif %}
+                    <div class="user-chip">
+                        <span class="user-chip-label">Signed in as</span>
+                        <strong class="user-chip-name">{{ current_user.username }}</strong>
+                        <span class="role-badge role-{{ current_user.role }}">{{ current_user.role|capitalize }}</span>
+                    </div>
+                    <form method="post" action="{{ url_for('logout') }}" class="logout-form">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="secondary-action auth-action-btn">Logout</button>
+                    </form>
+                </div>
+            </div>
+
+            <div class="top-control-row">
+                <form id="uploadForm" enctype="multipart/form-data" class="inline-form control-row-form {% if not current_permissions.can_upload %}form-disabled{% endif %}">
+                    <input type="file" id="fileInput" name="file" {% if not current_permissions.can_upload %}disabled{% endif %} required>
+                    <button type="submit" {% if not current_permissions.can_upload %}disabled title="Your role cannot upload feeder files."{% endif %}>Upload .GPX file</button>
+                </form>
+
+                <form id="xlsxUploadForm" enctype="multipart/form-data" class="inline-form control-row-form {% if not current_permissions.can_upload %}form-disabled{% endif %}">
+                    <input type="file" id="xlsxFileInput" name="file" accept=".xlsx" {% if not current_permissions.can_upload %}disabled{% endif %} required>
+                    <button type="submit" {% if not current_permissions.can_upload %}disabled title="Your role cannot upload XLSX files."{% endif %}>Upload .XLSX file</button>
+                </form>
+
+                <form id="kmlUploadForm" enctype="multipart/form-data" class="inline-form control-row-form {% if not current_permissions.can_upload %}form-disabled{% endif %}">
+                    <input type="file" id="kmlFileInput" name="file" accept=".kml" {% if not current_permissions.can_upload %}disabled{% endif %} required>
+                    <button type="submit" {% if not current_permissions.can_upload %}disabled title="Your role cannot upload KML files."{% endif %}>Upload .KML file</button>
+                </form>
+
+                <button id="refreshViewBtn" type="button" class="secondary-action top-control-btn">Refresh View</button>
+                <button id="validationReportBtn" type="button" class="secondary-action top-control-btn">View Validation Report</button>
+                <button id="clearWorkspaceBtn" type="button" class="secondary-action top-control-btn">Clear Current Workspace</button>
+                <button id="addInterruptionBtn" type="button" class="secondary-action top-control-btn" {% if not current_permissions.can_edit_interruption %}disabled title="Your role is read-only."{% endif %}>Add Interruption</button>
+            </div>
+
+            {% if current_permissions.read_only %}
+            <div id="topbarPermissionNotice" class="topbar-permission-note">Read-only access: uploads, exports, and interruption saving are disabled for your role.</div>
+            {% endif %}
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    <div class="admin-alert-stack">
+                        {% for category, message in messages %}
+                            <div class="admin-alert {{ category }}">{{ message }}</div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            {% endwith %}
+
+            <div class="workspace-status-zone">
+                <div class="workspace-file-strip">
+                    <p id="selectedFileName" class="selected-file hidden-msg">No feeder file selected</p>
+                    <p id="selectedXlsxFileName" class="selected-file hidden-msg">No XLSX file selected</p>
+                    <p id="selectedKmlFileName" class="selected-file hidden-msg">No KML file selected</p>
+                </div>
+                <div class="workspace-status-strip">
+                    <div id="statusBox" class="status-box hidden-msg">Waiting for feeder file upload...</div>
+                    <div id="xlsxStatusBox" class="status-box secondary-status hidden-msg">Waiting for XLSX upload...</div>
+                    <div id="kmlStatusBox" class="status-box hidden-msg">Waiting for KML upload...</div>
+                </div>
+                <div id="workspaceRecoveryNotice" class="workspace-recovery-notice hidden-msg"></div>
+            </div>
+        </div>
+    </header>
+
+    <main id="mainLayout" class="main-layout compact-layout app-main-layout">
+        <section class="map-wrap workspace-map-stage">
+            <div id="map"></div>
+            <div id="mapLoadingIndicator" class="map-loading hidden">
+                <div class="map-loading-spinner"></div>
+                <span id="mapLoadingText">Uploading data...</span>
+            </div>
+            <div class="map-search-overlay">
+                <div class="search-strip map-search-strip">
+                    <input id="mapSearchInput" type="text" placeholder="Search tower or transformer">
+                    <button id="mapSearchBtn" type="button" class="secondary-action">Search</button>
+                </div>
+            </div>
+            <div class="map-left-stack control-dock control-dock-left">
+                <section class="interruption-board">
+                    <div class="board-header">
+                        <div class="board-header-copy">
+                            <h2>Interruptions</h2>
+                            <span id="interruptionCount" class="board-count">0 saved</span>
+                        </div>
+                    </div>
+                    <div id="interruptionList" class="interruption-list empty-state">No interruption saved yet.</div>
+                </section>
+                <div class="line-visibility-panel">
+                    <button id="toggleGpxBtn" type="button" class="line-visibility-btn">Show .GPX Line</button>
+                    <button id="toggleKmlBtn" type="button" class="line-visibility-btn">Show .KML Line</button>
+                    <button id="toggleInferredBtn" type="button" class="line-visibility-btn">Hide Inferred Connections</button>
+                </div>
+                <div class="map-ops-panel">
+                    <button id="zoomFeederBtn" type="button" class="line-visibility-btn">Zoom to Feeder</button>
+                    <button id="zoomSelectedBtn" type="button" class="line-visibility-btn">Zoom to Selected Tower</button>
+                    <button id="clearAllBtn" type="button" class="line-visibility-btn danger-btn">Clear All Data</button>
+                </div>
+            </div>
+            <div class="map-right-stack control-dock control-dock-right">
+                <section class="right-overlay-cluster">
+                    <div class="right-overlay-top-row">
+                        <div class="map-stats-grid right-overlay-stats">
+                            <div class="map-stat">
+                                <span class="map-stat-label">Towers Count</span>
+                                <strong id="towerCountValue" class="map-stat-value">0</strong>
+                            </div>
+                            <div class="map-stat">
+                                <span class="map-stat-label">Accounts Count</span>
+                                <strong id="accountCountValue" class="map-stat-value">0</strong>
+                            </div>
+                        </div>
+                    </div>
+                    <section class="map-legend">
+                        <h3>Legend</h3>
+                        <div class="legend-item"><span class="legend-line legend-gpx"></span><span>GPX lines</span></div>
+                        <div class="legend-item"><span class="legend-line legend-kml"></span><span>KML lines</span></div>
+                        <div class="legend-item"><span class="legend-line legend-inferred"></span><span>Inferred / guessed</span></div>
+                        <div class="legend-item"><span class="legend-line legend-manual"></span><span>Manual override</span></div>
+                        <div class="legend-item"><span class="legend-line legend-selected"></span><span>Selected line</span></div>
+                        <div class="legend-item"><span class="legend-line legend-affected"></span><span>Affected downstream</span></div>
+                    </section>
+                </section>
+            </div>
+        </section>
+
+        <aside id="sidePanel" class="side-panel hidden">
+            <div class="side-panel-header">
+                <div>
+                    <h2>Affected Area</h2>
+                    <p class="side-panel-subtitle">Review affected poles, customer data, and outage impact.</p>
+                </div>
+                <div class="side-panel-search">
+                    <label for="sidePanelSearchInput">Search Consumers</label>
+                    <input id="sidePanelSearchInput" type="text" placeholder="Search consumer name or account number">
+                </div>
+            </div>
+
+            <div class="side-panel-body">
+                <section class="interruption-switcher">
+                    <div class="section-head">
+                        <h3>Saved Interruptions</h3>
+                        <button id="openViewerBtn" type="button" class="secondary-action compact-btn">View Window</button>
+                    </div>
+                    <div id="interruptionTabs" class="interruption-tabs empty-state">No interruptions saved.</div>
+                </section>
+
+                <section id="traceBadgeBox" class="trace-badge-box hidden">
+                    <span id="traceConfidenceBadge" class="trace-badge confirmed">Confirmed Path</span>
+                    <div id="traceWarningBox" class="trace-warning-box"></div>
+                </section>
+
+                <div id="detailsBox" class="details-box">
+                    <div class="side-panel-empty">
+                        <h3>No selection yet</h3>
+                        <p>Click a tower, line, or transformer on the map to load affected poles, accounts, and KWHR details.</p>
+                    </div>
+                </div>
+            </div>
+        </aside>
+    </main>
+
+    <div id="interruptionModal" class="modal hidden">
+        <div class="modal-backdrop" data-close="interruptionModal"></div>
+        <div class="modal-card form-card">
+            <div class="modal-head">
+                <h3>New Interruption</h3>
+                <button type="button" class="icon-btn" data-close="interruptionModal">Close</button>
+            </div>
+            <form id="interruptionForm" class="modal-form">
+                <label>
+                    <span>Interruption Name</span>
+                    <input id="interruptionNameInput" type="text" placeholder="Interruption 1" required>
+                </label>
+                <div class="datetime-grid">
+                    <label>
+                        <span>Start Date</span>
+                        <input id="interruptionStartDateInput" type="date" required>
+                    </label>
+                    <label>
+                        <span>Start Time</span>
+                        <input id="interruptionStartTimeInput" type="time" required>
+                    </label>
+                    <label>
+                        <span>Finish Date</span>
+                        <input id="interruptionEndDateInput" type="date" required>
+                    </label>
+                    <label>
+                        <span>Finish Time</span>
+                        <input id="interruptionEndTimeInput" type="time" required>
+                    </label>
+                </div>
+                <div id="interruptionFormInfo" class="form-note">Select a tower first, then save the current affected area as an interruption.</div>
+                <button type="submit" class="primary-action" {% if not current_permissions.can_edit_interruption %}disabled{% endif %}>Save Interruption</button>
+            </form>
+        </div>
+    </div>
+
+    <div id="viewerModal" class="modal hidden">
+        <div class="modal-backdrop" data-close="viewerModal"></div>
+        <div class="modal-card viewer-card">
+            <div class="modal-head">
+                <div>
+                    <h3 id="viewerTitle">Interruption Viewer</h3>
+                    <p id="viewerMeta" class="viewer-meta">Select an interruption.</p>
+                </div>
+                <div class="viewer-actions">
+                    <button id="viewerValidationBtn" type="button" class="secondary-action">View Validation Report</button>
+                    <button id="generateExportBtn" type="button" class="primary-action" {% if not current_permissions.can_export %}disabled title="Your role cannot export workbooks."{% endif %}>Generate XLSX</button>
+                    <button type="button" class="icon-btn" data-close="viewerModal">Close</button>
+                </div>
+            </div>
+            <div class="viewer-layout">
+                <aside class="viewer-sidebar">
+                    <h4>Interruption List</h4>
+                    <div id="viewerInterruptionTabs" class="interruption-tabs empty-state">No interruptions saved.</div>
+                    <div id="viewerDetails" class="viewer-details empty-state">Select an interruption to view all affected area information.</div>
+                </aside>
+                <section class="viewer-map-area">
+                    <div id="viewerMap"></div>
+                </section>
+            </div>
+        </div>
+    </div>
+
+    <div id="validationModal" class="modal hidden">
+        <div class="modal-backdrop" data-close="validationModal"></div>
+        <div class="modal-card validation-card">
+            <div class="modal-head">
+                <div>
+                    <h3>Validation Report</h3>
+                    <p id="validationMeta" class="viewer-meta">Review upload and tracing quality before using the output.</p>
+                </div>
+                <button type="button" class="icon-btn" data-close="validationModal">Close</button>
+            </div>
+            <div id="validationReportContent" class="validation-report-content"></div>
+        </div>
+    </div>
+
+    <script>
+        window.currentUser = {{ current_user|tojson }};
+        window.currentPermissions = {{ current_permissions|tojson }};
+        window.csrfToken = {{ csrf_token|tojson }};
+    </script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="/static/transformer-tools.js"></script>
+    <script src="/static/app.js"></script>
+</body>
+</html>
