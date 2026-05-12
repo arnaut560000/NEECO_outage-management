@@ -4598,26 +4598,25 @@ async function applyInterruption(interruptionId, options = {}) {
 
     activeInterruptionId = interruption.id;
     currentContextType = interruption.contextType || "tower";
+    const lineIndexes = Array.isArray(interruption.lineIndexes) ? interruption.lineIndexes : [];
+    const towerIndexes = Array.isArray(interruption.towerIndexes) ? interruption.towerIndexes : [];
     currentPanelData = {
         targetName: interruption.targetName,
         clickedTower: interruption.clickedTower ? cloneTower(interruption.clickedTower) : null,
         clickedLineIndex: Number.isInteger(interruption.clickedLineIndex) ? interruption.clickedLineIndex : null,
         affectedTowers: (interruption.affectedTowers || []).map(cloneTower),
         matchedRows: (interruption.matchedRows || []).map(cloneMatchedRow),
-        lineIndexes: [...(interruption.lineIndexes || [])],
-        towerIndexes: [...(interruption.towerIndexes || [])],
+        lineIndexes: [...lineIndexes],
+        towerIndexes: [...towerIndexes],
         kmlFeatureIds: [...(interruption.kmlFeatureIds || [])],
         feature: interruption.kmlFeature ? cloneKmlFeature(interruption.kmlFeature) : null,
         audit: interruption.audit || null,
     };
 
     resetLineColors();
+    applyNetworkLineHighlightState(lineIndexes, currentPanelData.clickedLineIndex);
+    applyTowerHighlightState(towerIndexes);
     highlightAffectedKmlFeatures(currentPanelData);
-    (interruption.lineIndexes || []).forEach((lineIndex) => {
-        if (linePolylines[lineIndex]) {
-            linePolylines[lineIndex].setStyle(getHighlightedNetworkLineStyle(networkData?.lines?.[lineIndex], Number.isInteger(interruption.clickedLineIndex) && interruption.clickedLineIndex === lineIndex));
-        }
-    });
 
     showSidePanel();
     renderCurrentContext();
@@ -4650,20 +4649,14 @@ async function deleteInterruption(interruptionId) {
     interruptions.splice(interruptionIndex, 1);
     syncInterruptionCounter();
 
-    if (!interruptions.length) {
+    if (activeInterruptionId === normalizedId) {
         activeInterruptionId = null;
         currentPanelData = null;
+        currentContextType = "tower";
         resetLineColors();
         hideSidePanel();
         renderInterruptionCollections();
         refreshViewerIfOpen();
-        return;
-    }
-
-    if (activeInterruptionId === normalizedId) {
-        const nextIndex = Math.min(interruptionIndex, interruptions.length - 1);
-        activeInterruptionId = interruptions[nextIndex].id;
-        applyInterruption(activeInterruptionId);
         return;
     }
 
