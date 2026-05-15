@@ -136,7 +136,7 @@
                                 <td>{{ record.feederName or "-" }}</td>
                                 <td>
                                     <div class="records-action-stack">
-                                        <a href="{{ url_for('index') }}?interruption_id={{ record.id }}&open_viewer=1" class="secondary-action auth-action-btn admin-nav-link">Open / View</a>
+                                        <a href="{{ url_for('operations') }}?interruption_id={{ record.id }}&open_viewer=1" class="secondary-action auth-action-btn admin-nav-link">Open / View</a>
                                         {% if current_permissions.can_export %}
                                         <a href="{{ url_for('export_saved_interruption', interruption_id=record.id) }}" class="primary-action records-export-link">Export Again</a>
                                         {% endif %}

@@ -12,11 +12,12 @@
         <div class="app-topbar-shell">
             <div class="topbar-main-row app-topbar-row">
                 <div class="topbar-title-block">
-                    <h1 class="app-page-title">Outage Management System</h1>
+                    <h1 class="app-page-title">NEECO II - AREA 1 OUTAGE MANAGEMENT SYSTEM</h1>
                     <p class="app-page-subtitle">Upload feeder data, review validation, trace outages, and manage saved interruption records.</p>
                 </div>
 
                 <div class="auth-strip topbar-account-strip">
+                    <a href="{{ url_for('index') }}" class="secondary-action auth-action-btn admin-nav-link">Dashboard</a>
                     {% if current_permissions.can_view_records %}
                     <a href="{{ url_for('records_history') }}" class="secondary-action auth-action-btn admin-nav-link">Records / History</a>
                     {% endif %}
@@ -200,6 +201,14 @@
                     <span>Interruption Name</span>
                     <input id="interruptionNameInput" type="text" placeholder="Interruption 1" required>
                 </label>
+                <label>
+                    <span>Outage Status</span>
+                    <select id="interruptionStatusInput" required>
+                        <option value="active">Active</option>
+                        <option value="scheduled">Scheduled</option>
+                        <option value="restored">Restored</option>
+                    </select>
+                </label>
                 <div class="datetime-grid">
                     <label>
                         <span>Start Date</span>
@@ -209,15 +218,23 @@
                         <span>Start Time</span>
                         <input id="interruptionStartTimeInput" type="time" required>
                     </label>
-                    <label>
-                        <span>Finish Date</span>
-                        <input id="interruptionEndDateInput" type="date" required>
+                    <label class="restored-only-field">
+                        <span>Restored Date</span>
+                        <input id="interruptionEndDateInput" type="date">
                     </label>
-                    <label>
-                        <span>Finish Time</span>
-                        <input id="interruptionEndTimeInput" type="time" required>
+                    <label class="restored-only-field">
+                        <span>Restored Time</span>
+                        <input id="interruptionEndTimeInput" type="time">
                     </label>
                 </div>
+                <label class="restored-only-field">
+                    <span>Action Taken</span>
+                    <input id="interruptionActionTakenInput" type="text" placeholder="Example: Restored primary line">
+                </label>
+                <label>
+                    <span>Remarks</span>
+                    <textarea id="interruptionRemarksInput" rows="3" placeholder="Optional remarks for the dashboard"></textarea>
+                </label>
                 <div id="interruptionFormInfo" class="form-note">Select a tower first, then save the current affected area as an interruption.</div>
                 <button type="submit" class="primary-action" {% if not current_permissions.can_edit_interruption %}disabled{% endif %}>Save Interruption</button>
             </form>

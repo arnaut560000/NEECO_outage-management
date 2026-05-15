@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NEECO II - AREA 1 Outage Management System</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="dashboard-page">
+    <header class="dashboard-header">
+        <div class="dashboard-header-main">
+            <div>
+                <h1>NEECO II - AREA 1 OUTAGE MANAGEMENT SYSTEM</h1>
+                <p>Monitor saved interruptions, affected areas, restoration status, and estimated outage impact.</p>
+            </div>
+            <div class="dashboard-actions">
+                <a href="{{ url_for('operations') }}" class="primary-action dashboard-map-link">Open Tracing Map</a>
+                {% if current_permissions.can_view_records %}
+                <a href="{{ url_for('records_history') }}" class="secondary-action auth-action-btn admin-nav-link">Records / History</a>
+                {% endif %}
+                {% if current_permissions.can_manage_users %}
+                <a href="{{ url_for('admin_users') }}" class="secondary-action auth-action-btn admin-nav-link">Manage Users</a>
+                {% endif %}
+                <div class="user-chip dashboard-user-chip">
+                    <span class="user-chip-label">Signed in as</span>
+                    <strong class="user-chip-name">{{ current_user.username }}</strong>
+                    <span class="role-badge role-{{ current_user.role }}">{{ current_user.role|capitalize }}</span>
+                </div>
+                <form method="post" action="{{ url_for('logout') }}" class="logout-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="secondary-action auth-action-btn">Logout</button>
+                </form>
+            </div>
+        </div>
+    </header>
+
+    <main class="dashboard-main">
+        <section class="dashboard-analytics" aria-label="Interruption analytics">
+            <article class="dashboard-metric total">
+                <span>Total Interruption</span>
+                <strong>{{ dashboard.counters.total }}</strong>
+            </article>
+            <article class="dashboard-metric active">
+                <span>Active Interruption</span>
+                <strong>{{ dashboard.counters.active }}</strong>
+            </article>
+            <article class="dashboard-metric scheduled">
+                <span>Scheduled Interruption</span>
+                <strong>{{ dashboard.counters.scheduled }}</strong>
+            </article>
+            <article class="dashboard-metric restored">
+                <span>Restored Interruption</span>
+                <strong>{{ dashboard.counters.restored }}</strong>
+            </article>
+        </section>
+
+        <section class="dashboard-table-section">
+            <div class="dashboard-section-head">
+                <div>
+                    <h2>Interruption Monitoring</h2>
+                    <p>Substation and feeder are inferred from the uploaded GPX feeder filename when available.</p>
+                </div>
+                <a href="{{ url_for('operations') }}" class="secondary-action dashboard-secondary-link">Add / Trace Interruption</a>
+            </div>
+
+            <div class="dashboard-table-wrap">
+                <table class="dashboard-table">
+                    <thead>
+                        <tr>
+                            <th>SS</th>
+                            <th>Feeder</th>
+                            <th>Affected Area</th>
+                            <th>Start Time</th>
+                            <th>Restored Date</th>
+                            <th>Restored Time</th>
+                            <th>Action Taken</th>
+                            <th>Duration - Minutes</th>
+                            <th>No. of Cust Affected</th>
+                            <th>Remarks</th>
+                            <th>Estimated KWHR Loss</th>
+                            <th>Estimated Revenue Loss</th>
+                            <th>Manage</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dashboardTableBody">
+                        {% if dashboard.rows %}
+                            {% for row in dashboard.rows %}
+                            <tr class="dashboard-row status-{{ row.status }}">
+                                <td>{{ row.substation }}</td>
+                                <td>
+                                    <strong>{{ row.feeder }}</strong>
+                                    {% if row.feederName and row.feederName != row.feeder %}
+                                    <span>{{ row.feederName }}</span>
+                                    {% endif %}
+                                </td>
+                                <td><a class="dashboard-link-btn" href="{{ url_for('operations') }}?interruption_id={{ row.id }}&open_viewer=1">{{ row.affectedArea }}</a></td>
+                                <td>{{ row.startTime }}</td>
+                                <td>{{ row.restoredDate or "-" }}</td>
+                                <td>{{ row.restoredTime or "-" }}</td>
+                                <td>
+                                    {% if row.actionTaken %}
+                                    <span class="status-pill restored">{{ row.actionTaken }}</span>
+                                    {% else %}
+                                    <span class="status-pill {{ row.status }}">{{ row.status|capitalize }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ row.durationMinutes if row.durationMinutes != "" else "-" }}</td>
+                                <td>{{ row.customersAffected }}</td>
+                                <td>{{ row.remarks }}</td>
+                                <td>{{ row.estimatedKwhrLoss }}</td>
+                                <td>PHP {{ row.estimatedRevenueLoss }}</td>
+                                <td><button type="button" class="secondary-action compact-btn" data-open-manage="{{ row.id }}">Manage</button></td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="13" class="dashboard-empty-cell">No saved interruptions yet. Open the tracing map to upload a feeder GPX and save an interruption.</td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <div id="affectedAreaModal" class="modal hidden">
+        <div class="modal-backdrop" data-dashboard-close></div>
+        <div class="modal-card dashboard-detail-card">
+            <div class="modal-head">
+                <div>
+                    <h3 id="affectedAreaTitle">Affected Area</h3>
+                    <p id="affectedAreaMeta" class="viewer-meta">Interruption details</p>
+                </div>
+                <div class="viewer-actions">
+                    <button type="button" class="icon-btn" data-dashboard-close>Close</button>
+                </div>
+            </div>
+            <div id="affectedAreaDetails" class="dashboard-detail-grid"></div>
+            <form id="monitoringForm" class="dashboard-monitoring-form">
+                <input id="monitoringInterruptionId" type="hidden">
+                <label>
+                    <span>Status</span>
+                    <select id="monitoringStatus">
+                        <option value="active">Active</option>
+                        <option value="scheduled">Scheduled</option>
+                        <option value="restored">Restored</option>
+                    </select>
+                </label>
+                <label>
+                    <span>Action Taken</span>
+                    <input id="monitoringActionTaken" type="text" placeholder="Example: Restored, isolated, transferred load">
+                </label>
+                <label class="dashboard-system-restored-field">
+                    <span>Restored Date</span>
+                    <input id="monitoringRestoredDate" type="date">
+                </label>
+                <label class="dashboard-system-restored-field">
+                    <span>Restored Time</span>
+                    <input id="monitoringRestoredTime" type="time">
+                </label>
+                <label class="dashboard-form-wide">
+                    <span>Remarks</span>
+                    <textarea id="monitoringRemarks" rows="3" placeholder="Add remarks for the dashboard record"></textarea>
+                </label>
+                <div class="dashboard-modal-actions">
+                    <button id="monitoringSaveBtn" type="submit" class="primary-action" {% if not current_permissions.can_edit_interruption %}disabled{% endif %}>Save Monitoring Update</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        window.dashboardData = {{ dashboard|tojson }};
+        window.currentPermissions = {{ current_permissions|tojson }};
+        window.csrfToken = {{ csrf_token|tojson }};
+    </script>
+    <script src="/static/dashboard.js"></script>
+</body>
+</html>

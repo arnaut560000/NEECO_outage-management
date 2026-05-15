@@ -4,6 +4,7 @@ import shutil
 import re
 import sqlite3
 import time
+import calendar
 from contextlib import contextmanager
 from datetime import datetime
 from urllib.parse import urljoin, urlparse
@@ -74,6 +75,15 @@ KML_FEATURE_CACHE_LIMIT = 4
 ACCOUNT_QUERY_RESULT_LIMIT = 500
 ACCOUNT_SEARCH_RESULT_CACHE_LIMIT = 24
 ACCOUNT_NUMBER_PATTERN = re.compile(r"\b\d{2}-\d{4}-\d{4}\b")
+FEEDER_SUBSTATION_RULES = [
+    ({"F11", "F12", "F13", "F14"}, {"TAL"}, "Talavera"),
+    ({"F24", "F25"}, {"MNZ", "MUNOZ", "MUNOZNEW", "MUÑOZ"}, "Munoz New"),
+    ({"F21", "F22", "F23"}, {"MNZ", "MUNOZ", "MUNOZOLD", "MUÑOZ"}, "Munoz Old"),
+    ({"F41", "F42", "F43"}, {"GBA", "GUIMBA"}, "Guimba"),
+    ({"F71", "F72"}, {"LPO", "LUPAO"}, "Lupao"),
+    ({"F61", "F62"}, {"ALG", "ALIAGA"}, "Aliaga"),
+    ({"F31", "F32", "F33"}, {"QZN", "QUEZON"}, "Quezon"),
+]
 
 
 def _get_table_columns(connection, table_name):
@@ -185,6 +195,11 @@ def init_interruptions_db(db_path):
                 affected_accounts_count INTEGER NOT NULL DEFAULT 0,
                 matched_rows_count INTEGER NOT NULL DEFAULT 0,
                 trace_confidence TEXT NOT NULL DEFAULT 'confirmed',
+                monitoring_status TEXT NOT NULL DEFAULT 'active',
+                action_taken TEXT NOT NULL DEFAULT '',
+                restored_date TEXT NOT NULL DEFAULT '',
+                restored_time TEXT NOT NULL DEFAULT '',
+                remarks TEXT NOT NULL DEFAULT '',
                 created_by TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
@@ -194,6 +209,11 @@ def init_interruptions_db(db_path):
         _ensure_table_column(connection, "interruptions", "affected_accounts_count", "INTEGER NOT NULL DEFAULT 0")
         _ensure_table_column(connection, "interruptions", "matched_rows_count", "INTEGER NOT NULL DEFAULT 0")
         _ensure_table_column(connection, "interruptions", "trace_confidence", "TEXT NOT NULL DEFAULT 'confirmed'")
+        _ensure_table_column(connection, "interruptions", "monitoring_status", "TEXT NOT NULL DEFAULT 'active'")
+        _ensure_table_column(connection, "interruptions", "action_taken", "TEXT NOT NULL DEFAULT ''")
+        _ensure_table_column(connection, "interruptions", "restored_date", "TEXT NOT NULL DEFAULT ''")
+        _ensure_table_column(connection, "interruptions", "restored_time", "TEXT NOT NULL DEFAULT ''")
+        _ensure_table_column(connection, "interruptions", "remarks", "TEXT NOT NULL DEFAULT ''")
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_interruptions_created_at ON interruptions(datetime(created_at) DESC, id DESC)"
         )
@@ -360,6 +380,247 @@ def _interruption_summary_counts(row, affected_towers=None, matched_rows=None):
     }
 
 
+def _normalize_feeder_text(value):
+    return re.sub(r"[^A-Z0-9]+", " ", str(value or "").upper()).strip()
+
+
+def infer_feeder_code(feeder_name):
+    text = _normalize_feeder_text(feeder_name)
+    match = re.search(r"\bF\s*0?(\d{2})\b", text)
+    if not match:
+        match = re.search(r"\b0?(\d{2})\b", text)
+    return f"F{match.group(1)}" if match else ""
+
+
+def infer_substation_name(feeder_name):
+    text = _normalize_feeder_text(feeder_name)
+    compact_text = text.replace(" ", "")
+    feeder_code = infer_feeder_code(text)
+    for feeder_codes, aliases, substation_name in FEEDER_SUBSTATION_RULES:
+        has_code = feeder_code in feeder_codes
+        has_alias = any(alias in text.split() or alias in compact_text for alias in aliases)
+        if has_code and has_alias:
+            return substation_name
+    for feeder_codes, _, substation_name in FEEDER_SUBSTATION_RULES:
+        if feeder_code in feeder_codes:
+            return substation_name
+    return "Unidentified"
+
+
+def _parse_local_datetime(date_value, time_value):
+    date_text = str(date_value or "").strip()
+    time_text = str(time_value or "").strip()
+    if not date_text:
+        return None
+    for candidate in (
+        f"{date_text} {time_text or '00:00'}",
+        f"{date_text} {time_text or '00:00'}:00",
+    ):
+        for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
+            try:
+                return datetime.strptime(candidate, fmt)
+            except ValueError:
+                continue
+    return None
+
+
+def normalize_monitoring_status(value, *, start_date="", start_time="", restored_date="", restored_time=""):
+    status = str(value or "").strip().lower()
+    start_dt = _parse_local_datetime(start_date, start_time)
+    restored_dt = _parse_local_datetime(restored_date, restored_time)
+    now = datetime.now()
+    if status == "restored":
+        return "restored"
+    if status == "scheduled":
+        return "scheduled" if start_dt and start_dt > now else "active"
+    if status == "active":
+        return "active"
+    if restored_dt and restored_dt <= now:
+        return "restored"
+    if start_dt and start_dt > now:
+        return "scheduled"
+    return "active"
+
+
+def normalize_monitoring_fields(payload, existing=None):
+    existing = existing or {}
+    previous_status = str(existing.get("status") or "").strip().lower()
+    requested_status = str(payload.get("status") or payload.get("monitoring_status") or "").strip().lower()
+    status = normalize_monitoring_status(
+        payload.get("status") or payload.get("monitoring_status") or existing.get("status"),
+        start_date=payload.get("start_date") or existing.get("startDate") or "",
+        start_time=payload.get("start_time") or existing.get("startTime") or "",
+        restored_date=payload.get("restored_date") or existing.get("restoredDate") or "",
+        restored_time=payload.get("restored_time") or existing.get("restoredTime") or "",
+    )
+    action_taken = str(payload.get("action_taken") if payload.get("action_taken") is not None else existing.get("actionTaken", "")).strip()
+    restored_date = str(
+        payload.get("restored_date")
+        if payload.get("restored_date") is not None
+        else existing.get("restoredDate", "")
+    ).strip()
+    restored_time = str(
+        payload.get("restored_time")
+        if payload.get("restored_time") is not None
+        else existing.get("restoredTime", "")
+    ).strip()
+    remarks = str(payload.get("remarks") if payload.get("remarks") is not None else existing.get("remarks", "")).strip()
+
+    if status == "restored" and not action_taken:
+        action_taken = "Restored"
+    if action_taken and status != "restored":
+        status = "restored"
+    if status == "restored" and previous_status != "restored" and requested_status == "restored":
+        now = datetime.now()
+        restored_date = now.strftime("%Y-%m-%d")
+        restored_time = now.strftime("%H:%M")
+    if (status == "restored" or action_taken) and (not restored_date or not restored_time):
+        now = datetime.now()
+        restored_date = restored_date or now.strftime("%Y-%m-%d")
+        restored_time = restored_time or now.strftime("%H:%M")
+    if status != "restored" and not action_taken:
+        restored_date = ""
+        restored_time = ""
+
+    return {
+        "status": status,
+        "actionTaken": action_taken,
+        "restoredDate": restored_date,
+        "restoredTime": restored_time,
+        "remarks": remarks,
+    }
+
+
+def _sum_kwhr(rows):
+    total = 0.0
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            total += float(row.get("kwhr") or 0)
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def _format_number(value, places=2):
+    numeric = float(value or 0)
+    if abs(numeric - round(numeric)) < 0.00001:
+        return f"{int(round(numeric)):,}"
+    return f"{numeric:,.{places}f}"
+
+
+def _duration_loss_metrics(start_dt, duration_minutes, rows, dsm_rate=2.0148):
+    if not start_dt or not isinstance(duration_minutes, int) or duration_minutes <= 0:
+        return {"kwhr_loss": 0.0, "revenue_loss": 0.0}
+    total_kwhr = _sum_kwhr(rows)
+    if total_kwhr <= 0:
+        return {"kwhr_loss": 0.0, "revenue_loss": 0.0}
+    days_in_month = calendar.monthrange(start_dt.year, start_dt.month)[1]
+    kwhr_loss = (((total_kwhr / days_in_month) / 24) / 60) * duration_minutes
+    return {
+        "kwhr_loss": round(kwhr_loss, 4),
+        "revenue_loss": round(kwhr_loss * float(dsm_rate or 0), 4),
+    }
+
+
+def _clean_area_text(value):
+    text = re.sub(r"\s+", " ", str(value or "")).strip(" ,")
+    return text
+
+
+def _extract_barangay_from_address(address):
+    text = _clean_area_text(address)
+    if not text:
+        return ""
+    match = re.search(r"\b(?:BRGY|BARANGAY)\.?\s+([^,;]+)", text, flags=re.IGNORECASE)
+    if match:
+        return _clean_area_text(match.group(1)).title()
+    parts = [_clean_area_text(part) for part in re.split(r"[,;]", text) if _clean_area_text(part)]
+    if len(parts) >= 2:
+        return parts[-2].title()
+    return parts[0].title() if parts else ""
+
+
+def infer_affected_area(record):
+    area_counts = {}
+    for row in record.get("matchedRows") or []:
+        if not isinstance(row, dict):
+            continue
+        area = _extract_barangay_from_address(row.get("address"))
+        if area:
+            area_counts[area] = area_counts.get(area, 0) + 1
+    if area_counts:
+        sorted_areas = sorted(area_counts.items(), key=lambda item: (-item[1], item[0]))
+        primary_area = sorted_areas[0][0]
+        if len(sorted_areas) > 1:
+            return f"{primary_area} +{len(sorted_areas) - 1} area(s)"
+        return primary_area
+    target_name = str(record.get("targetName") or record.get("sourceTowerClicked") or "").strip()
+    return re.sub(r"^(Tower|Transformer|Line Cut|Search Result):\s*", "", target_name, flags=re.IGNORECASE) or "-"
+
+
+def build_dashboard_model():
+    now = datetime.now()
+    records = [serialize_interruption_row(row) for row in list_interruption_rows()]
+    dashboard_rows = []
+    counters = {
+        "total": len(records),
+        "active": 0,
+        "scheduled": 0,
+        "restored": 0,
+    }
+
+    for record in records:
+        start_dt = _parse_local_datetime(record.get("startDate"), record.get("startTime"))
+        status = normalize_monitoring_status(
+            record.get("status"),
+            start_date=record.get("startDate"),
+            start_time=record.get("startTime"),
+            restored_date=record.get("restoredDate"),
+            restored_time=record.get("restoredTime"),
+        )
+        counters[status] += 1
+
+        feeder_name = record.get("feederName") or ""
+        action_taken = record.get("actionTaken", "")
+        is_restored = status == "restored" or bool(action_taken)
+        dashboard_restored_date = record.get("restoredDate") if is_restored else ""
+        dashboard_restored_time = record.get("restoredTime") if is_restored else ""
+        restored_dt = _parse_local_datetime(dashboard_restored_date, dashboard_restored_time)
+        duration_minutes = ""
+        if is_restored and start_dt and restored_dt and restored_dt >= start_dt:
+            duration_minutes = int((restored_dt - start_dt).total_seconds() // 60)
+        loss_metrics = _duration_loss_metrics(start_dt, duration_minutes, record.get("matchedRows"))
+
+        dashboard_rows.append({
+            "id": record.get("id", ""),
+            "name": record.get("name", ""),
+            "status": status,
+            "substation": infer_substation_name(feeder_name),
+            "feeder": infer_feeder_code(feeder_name) or feeder_name or "-",
+            "feederName": feeder_name,
+            "affectedArea": infer_affected_area(record),
+            "startTime": " ".join(part for part in [record.get("startDate"), record.get("startTime")] if part) or "-",
+            "restoredDate": dashboard_restored_date if is_restored else "",
+            "restoredTime": dashboard_restored_time if is_restored else "",
+            "actionTaken": action_taken,
+            "durationMinutes": duration_minutes,
+            "customersAffected": record.get("totalAffectedAccounts", 0),
+            "remarks": record.get("remarks") or record.get("traceConfidence", "confirmed").replace("_", " ").title(),
+            "estimatedKwhrLoss": _format_number(loss_metrics["kwhr_loss"], places=4),
+            "estimatedRevenueLoss": _format_number(loss_metrics["revenue_loss"], places=2),
+            "affectedPoles": record.get("totalPolId", 0),
+            "createdBy": record.get("createdBy", ""),
+            "createdAt": record.get("createdAt", ""),
+        })
+
+    return {
+        "counters": counters,
+        "rows": dashboard_rows,
+    }
+
+
 def serialize_interruption_row(row):
     if not row:
         return None
@@ -373,6 +634,17 @@ def serialize_interruption_row(row):
     kml_feature = _json_loads(row["kml_feature_json"], None)
     audit = _json_loads(row["audit_json"], None)
     summary_counts = _interruption_summary_counts(row, affected_towers=affected_towers, matched_rows=matched_rows)
+    monitoring = normalize_monitoring_fields(
+        {
+            "monitoring_status": row["monitoring_status"] if "monitoring_status" in row.keys() else "",
+            "action_taken": row["action_taken"] if "action_taken" in row.keys() else "",
+            "restored_date": row["restored_date"] if "restored_date" in row.keys() else "",
+            "restored_time": row["restored_time"] if "restored_time" in row.keys() else "",
+            "remarks": row["remarks"] if "remarks" in row.keys() else "",
+            "start_date": row["start_date"] or "",
+            "start_time": row["start_time"] or "",
+        }
+    )
 
     return {
         "id": str(row["id"]),
@@ -394,6 +666,11 @@ def serialize_interruption_row(row):
         "kmlFeature": kml_feature if isinstance(kml_feature, dict) else None,
         "audit": audit if isinstance(audit, dict) else None,
         "traceConfidence": row["trace_confidence"] or ((audit or {}).get("trace_confidence", "confirmed") if isinstance(audit, dict) else "confirmed"),
+        "status": monitoring["status"],
+        "actionTaken": monitoring["actionTaken"],
+        "restoredDate": monitoring["restoredDate"],
+        "restoredTime": monitoring["restoredTime"],
+        "remarks": monitoring["remarks"],
         "feederName": row["feeder_name"] or "",
         "totalPolId": summary_counts["totalPolId"],
         "totalAffectedAccounts": summary_counts["totalAffectedAccounts"],
@@ -407,6 +684,17 @@ def serialize_interruption_summary_row(row):
     if not row:
         return None
     summary_counts = _interruption_summary_counts(row)
+    monitoring = normalize_monitoring_fields(
+        {
+            "monitoring_status": row["monitoring_status"] if "monitoring_status" in row.keys() else "",
+            "action_taken": row["action_taken"] if "action_taken" in row.keys() else "",
+            "restored_date": row["restored_date"] if "restored_date" in row.keys() else "",
+            "restored_time": row["restored_time"] if "restored_time" in row.keys() else "",
+            "remarks": row["remarks"] if "remarks" in row.keys() else "",
+            "start_date": row["start_date"] or "",
+            "start_time": row["start_time"] or "",
+        }
+    )
     return {
         "id": str(row["id"]),
         "name": row["name"] or "",
@@ -427,6 +715,11 @@ def serialize_interruption_summary_row(row):
         "kmlFeature": None,
         "audit": None,
         "traceConfidence": row["trace_confidence"] or "confirmed",
+        "status": monitoring["status"],
+        "actionTaken": monitoring["actionTaken"],
+        "restoredDate": monitoring["restoredDate"],
+        "restoredTime": monitoring["restoredTime"],
+        "remarks": monitoring["remarks"],
         "feederName": row["feeder_name"] or "",
         "totalPolId": summary_counts["totalPolId"],
         "totalAffectedAccounts": summary_counts["totalAffectedAccounts"],
@@ -564,6 +857,7 @@ AUDIT_DETAIL_ALLOWED_KEYS = {
     "export_disconnected_fragments": {"request_path", "method", "ip", "fragment_count", "feeder_name"},
     "save_interruption": {"request_path", "method", "ip", "interruption_id", "name", "target_name", "context_type", "feeder_name"},
     "delete_interruption": {"request_path", "method", "ip", "interruption_id", "name"},
+    "update_interruption_monitoring": {"request_path", "method", "ip", "interruption_id", "name", "status", "action_taken"},
     "clear_workspace": {"request_path", "method", "ip", "source"},
     "create_user": {"request_path", "method", "ip", "target_username", "role", "target_role"},
     "update_role": {"request_path", "method", "ip", "target_username", "previous_role", "new_role", "role"},
@@ -1673,6 +1967,11 @@ def list_interruption_rows():
                 affected_accounts_count,
                 matched_rows_count,
                 trace_confidence,
+                monitoring_status,
+                action_taken,
+                restored_date,
+                restored_time,
+                remarks,
                 created_by,
                 created_at
             FROM interruptions
@@ -1701,6 +2000,11 @@ def list_interruption_summary_rows():
                 affected_accounts_count,
                 matched_rows_count,
                 trace_confidence,
+                monitoring_status,
+                action_taken,
+                restored_date,
+                restored_time,
+                remarks,
                 created_by,
                 created_at
             FROM interruptions
@@ -1795,6 +2099,11 @@ def get_interruption_row(interruption_id):
                 affected_accounts_count,
                 matched_rows_count,
                 trace_confidence,
+                monitoring_status,
+                action_taken,
+                restored_date,
+                restored_time,
+                remarks,
                 created_by,
                 created_at
             FROM interruptions
@@ -1838,6 +2147,15 @@ def create_interruption_record(payload, created_by):
     affected_poles_count = _count_affected_pol_ids(affected_towers)
     affected_accounts_count = _count_unique_accounts(matched_rows)
     matched_rows_count = len(matched_rows) if isinstance(matched_rows, list) else 0
+    monitoring = normalize_monitoring_fields(
+        payload,
+        existing={
+            "startDate": normalized_payload["start_date"],
+            "startTime": normalized_payload["start_time"],
+            "restoredDate": normalized_payload["end_date"],
+            "restoredTime": normalized_payload["end_time"],
+        },
+    )
 
     with get_app_db_connection() as connection:
         cursor = connection.execute(
@@ -1865,8 +2183,13 @@ def create_interruption_record(payload, created_by):
                 affected_accounts_count,
                 matched_rows_count,
                 trace_confidence,
+                monitoring_status,
+                action_taken,
+                restored_date,
+                restored_time,
+                remarks,
                 created_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 normalized_payload["name"],
@@ -1891,6 +2214,11 @@ def create_interruption_record(payload, created_by):
                 affected_accounts_count,
                 matched_rows_count,
                 trace_confidence,
+                monitoring["status"],
+                monitoring["actionTaken"],
+                monitoring["restoredDate"],
+                monitoring["restoredTime"],
+                monitoring["remarks"],
                 created_by,
             ),
         )
@@ -1904,6 +2232,37 @@ def delete_interruption_record(interruption_id):
         cursor = connection.execute("DELETE FROM interruptions WHERE id = ?", (interruption_id,))
         connection.commit()
     return cursor.rowcount > 0
+
+
+def update_interruption_monitoring_record(interruption_id, payload):
+    existing = serialize_interruption_row(get_interruption_row(interruption_id))
+    if not existing:
+        return None
+    monitoring = normalize_monitoring_fields(payload, existing=existing)
+    with get_app_db_connection() as connection:
+        cursor = connection.execute(
+            """
+            UPDATE interruptions
+            SET monitoring_status = ?,
+                action_taken = ?,
+                restored_date = ?,
+                restored_time = ?,
+                remarks = ?
+            WHERE id = ?
+            """,
+            (
+                monitoring["status"],
+                monitoring["actionTaken"],
+                monitoring["restoredDate"],
+                monitoring["restoredTime"],
+                monitoring["remarks"],
+                interruption_id,
+            ),
+        )
+        connection.commit()
+    if cursor.rowcount <= 0:
+        return None
+    return get_interruption_row(interruption_id)
 
 
 def build_saved_interruption_export(interruption_id):
@@ -2121,6 +2480,7 @@ CSRF_PROTECTED_ENDPOINTS = {
     "logout": "index",
     "create_interruption": "index",
     "delete_interruption": "index",
+    "update_interruption_monitoring": "index",
     "admin_users_create": "admin_users",
     "admin_users_update_role": "admin_users",
     "admin_users_reset_password": "admin_users",
@@ -2237,6 +2597,12 @@ def logout():
 @app.route("/")
 @login_required
 def index():
+    return render_template("dashboard.html", dashboard=build_dashboard_model())
+
+
+@app.route("/operations")
+@login_required
+def operations():
     return render_template("index.html")
 
 
@@ -2437,6 +2803,26 @@ def delete_interruption(interruption_id):
         },
     )
     return api_success("Interruption deleted successfully.")
+
+
+@app.route("/interruptions/<int:interruption_id>/monitoring", methods=["PATCH"])
+@role_required("can_edit_interruption")
+def update_interruption_monitoring(interruption_id):
+    payload = request.get_json(silent=True) or {}
+    row = update_interruption_monitoring_record(interruption_id, payload)
+    if not row:
+        return api_error("Interruption not found.", status_code=404)
+    interruption = serialize_interruption_row(row)
+    log_audit_event(
+        "update_interruption_monitoring",
+        details={
+            "interruption_id": interruption["id"],
+            "name": interruption["name"],
+            "status": interruption["status"],
+            "action_taken": interruption["actionTaken"],
+        },
+    )
+    return api_success("Interruption monitoring updated.", interruption=interruption, dashboard=build_dashboard_model())
 
 
 @app.route("/interruptions/<int:interruption_id>/export", methods=["GET"])

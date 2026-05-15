@@ -88,10 +88,13 @@ const openViewerBtn = document.getElementById("openViewerBtn");
 const interruptionModal = document.getElementById("interruptionModal");
 const interruptionForm = document.getElementById("interruptionForm");
 const interruptionNameInput = document.getElementById("interruptionNameInput");
+const interruptionStatusInput = document.getElementById("interruptionStatusInput");
 const interruptionStartDateInput = document.getElementById("interruptionStartDateInput");
 const interruptionStartTimeInput = document.getElementById("interruptionStartTimeInput");
 const interruptionEndDateInput = document.getElementById("interruptionEndDateInput");
 const interruptionEndTimeInput = document.getElementById("interruptionEndTimeInput");
+const interruptionActionTakenInput = document.getElementById("interruptionActionTakenInput");
+const interruptionRemarksInput = document.getElementById("interruptionRemarksInput");
 const interruptionFormInfo = document.getElementById("interruptionFormInfo");
 const viewerModal = document.getElementById("viewerModal");
 const viewerTitle = document.getElementById("viewerTitle");
@@ -914,6 +917,36 @@ refreshViewBtn.addEventListener("click", function () {
     clearActiveSelectionState();
 });
 
+function updateInterruptionStatusFields() {
+    const isRestored = interruptionStatusInput?.value === "restored";
+    document.querySelectorAll(".restored-only-field").forEach((field) => {
+        field.classList.toggle("hidden-msg", !isRestored);
+    });
+    if (interruptionEndDateInput) {
+        interruptionEndDateInput.required = isRestored;
+    }
+    if (interruptionEndTimeInput) {
+        interruptionEndTimeInput.required = isRestored;
+    }
+    if (interruptionActionTakenInput) {
+        interruptionActionTakenInput.required = isRestored;
+    }
+    if (isRestored && (!interruptionEndDateInput.value || !interruptionEndTimeInput.value)) {
+        const now = new Date();
+        interruptionEndDateInput.value = interruptionEndDateInput.value || [
+            now.getFullYear(),
+            String(now.getMonth() + 1).padStart(2, "0"),
+            String(now.getDate()).padStart(2, "0"),
+        ].join("-");
+        interruptionEndTimeInput.value = interruptionEndTimeInput.value || [
+            String(now.getHours()).padStart(2, "0"),
+            String(now.getMinutes()).padStart(2, "0"),
+        ].join(":");
+    }
+}
+
+interruptionStatusInput?.addEventListener("change", updateInterruptionStatusFields);
+
 addInterruptionBtn.addEventListener("click", function () {
     if (!canPerform("can_edit_interruption")) {
         alert("Your role is read-only and cannot save interruptions.");
@@ -922,6 +955,7 @@ addInterruptionBtn.addEventListener("click", function () {
 
     interruptionNameInput.value = `Interruption ${interruptionCounter}`;
     setDefaultInterruptionDateTime();
+    updateInterruptionStatusFields();
     interruptionFormInfo.textContent = currentPanelData
         ? `Saving current selection for ${currentPanelData.targetName}.`
         : "Click a tower first so we know which interruption to save.";
@@ -938,6 +972,11 @@ interruptionForm.addEventListener("submit", async function (e) {
 
     if (!currentPanelData) {
         interruptionFormInfo.textContent = "Click a tower first so we know which interruption to save.";
+        return;
+    }
+
+    if (interruptionStatusInput.value === "restored" && (!interruptionEndDateInput.value || !interruptionEndTimeInput.value || !interruptionActionTakenInput.value.trim())) {
+        interruptionFormInfo.textContent = "Restored interruptions need restored date, restored time, and action taken.";
         return;
     }
 
@@ -1120,6 +1159,11 @@ function normalizeInterruptionRecord(interruption) {
         totalPolId: Number(interruption.totalPolId ?? interruption.total_pol_id ?? 0) || 0,
         totalAffectedAccounts: Number(interruption.totalAffectedAccounts ?? interruption.total_affected_accounts ?? 0) || 0,
         matchedRowsCount: Number(interruption.matchedRowsCount ?? interruption.matched_rows_count ?? 0) || 0,
+        status: String(interruption.status || interruption.monitoring_status || "active").trim() || "active",
+        actionTaken: String(interruption.actionTaken || interruption.action_taken || "").trim(),
+        restoredDate: String(interruption.restoredDate || interruption.restored_date || "").trim(),
+        restoredTime: String(interruption.restoredTime || interruption.restored_time || "").trim(),
+        remarks: String(interruption.remarks || "").trim(),
         feederName: String(interruption.feederName || interruption.feeder_name || "").trim(),
         createdBy: String(interruption.createdBy || interruption.created_by || "").trim(),
         createdAt: String(interruption.createdAt || interruption.created_at || "").trim(),
@@ -1485,12 +1529,20 @@ async function fetchInterruptionFromServer(interruptionId) {
 
 function buildInterruptionRequestPayload() {
     const audit = buildTraceAudit(currentPanelData);
+    const status = interruptionStatusInput.value || "active";
+    const restoredDate = status === "restored" ? interruptionEndDateInput.value : "";
+    const restoredTime = status === "restored" ? interruptionEndTimeInput.value : "";
     return {
         name: interruptionNameInput.value.trim() || `Interruption ${interruptionCounter}`,
         start_date: interruptionStartDateInput.value,
         start_time: interruptionStartTimeInput.value,
-        end_date: interruptionEndDateInput.value,
-        end_time: interruptionEndTimeInput.value,
+        end_date: restoredDate,
+        end_time: restoredTime,
+        status,
+        action_taken: status === "restored" ? interruptionActionTakenInput.value.trim() : "",
+        restored_date: restoredDate,
+        restored_time: restoredTime,
+        remarks: interruptionRemarksInput.value.trim(),
         context_type: currentContextType,
         target_name: currentPanelData?.targetName || "",
         source_tower_clicked: currentPanelData?.clickedTower?.name || currentPanelData?.feature?.name || currentPanelData?.targetName || "",
@@ -2778,10 +2830,47 @@ function buildChildrenMap(lines) {
     return children;
 }
 
+function buildRootedChildrenMap(lines, sourceIndex = 0) {
+    const adjacency = new Map();
+    lines.forEach((line, lineIndex) => {
+        const startIndex = line.start_index;
+        const endIndex = line.end_index;
+        if (!Number.isInteger(startIndex) || !Number.isInteger(endIndex)) {
+            return;
+        }
+        if (!adjacency.has(startIndex)) adjacency.set(startIndex, []);
+        if (!adjacency.has(endIndex)) adjacency.set(endIndex, []);
+        adjacency.get(startIndex).push({ neighborIndex: endIndex, lineIndex });
+        adjacency.get(endIndex).push({ neighborIndex: startIndex, lineIndex });
+    });
+
+    const children = new Map();
+    const visited = new Set([sourceIndex]);
+    const queue = [sourceIndex];
+    while (queue.length > 0) {
+        const current = queue.shift();
+        (adjacency.get(current) || []).forEach(({ neighborIndex, lineIndex }) => {
+            if (visited.has(neighborIndex)) {
+                return;
+            }
+            visited.add(neighborIndex);
+            queue.push(neighborIndex);
+            if (!children.has(current)) {
+                children.set(current, []);
+            }
+            children.get(current).push({ childTowerIndex: neighborIndex, lineIndex });
+        });
+    }
+    return { children, visited };
+}
+
 function getDownstream(clickedTowerIndex) {
     if (!networkData) return { towerSet: new Set(), lineSet: new Set() };
 
-    const childrenMap = buildChildrenMap(networkData.lines);
+    const rootedMap = buildRootedChildrenMap(networkData.lines, 0);
+    const childrenMap = rootedMap.visited.has(clickedTowerIndex)
+        ? rootedMap.children
+        : buildChildrenMap(networkData.lines);
     const towerSet = new Set([clickedTowerIndex]);
     const lineSet = new Set();
     const queue = [clickedTowerIndex];
@@ -4328,8 +4417,9 @@ function getSidePanelInterruptionWindow() {
 
     const startDate = interruptionStartDateInput?.value || "-";
     const startTime = interruptionStartTimeInput?.value || "-";
-    const endDate = interruptionEndDateInput?.value || "-";
-    const endTime = interruptionEndTimeInput?.value || "-";
+    const isRestored = interruptionStatusInput?.value === "restored";
+    const endDate = isRestored ? (interruptionEndDateInput?.value || "-") : "-";
+    const endTime = isRestored ? (interruptionEndTimeInput?.value || "-") : "-";
     return {
         start: `${startDate} ${startTime}`.trim(),
         end: `${endDate} ${endTime}`.trim(),
@@ -5048,11 +5138,13 @@ function resetInterruptions() {
 
 function setDefaultInterruptionDateTime() {
     const now = new Date();
-    const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    interruptionStatusInput.value = "active";
     interruptionStartDateInput.value = now.toISOString().slice(0, 10);
     interruptionStartTimeInput.value = now.toTimeString().slice(0, 5);
-    interruptionEndDateInput.value = tomorrow.toISOString().slice(0, 10);
-    interruptionEndTimeInput.value = now.toTimeString().slice(0, 5);
+    interruptionEndDateInput.value = "";
+    interruptionEndTimeInput.value = "";
+    interruptionActionTakenInput.value = "";
+    interruptionRemarksInput.value = "";
 }
 
 function formatRangeLabel(interruption) {

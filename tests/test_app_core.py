@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from datetime import datetime, timedelta
 
 
 class OutageAppTestCase(unittest.TestCase):
@@ -99,6 +100,18 @@ class OutageAppTestCase(unittest.TestCase):
         response = self.client.get("/audit-logs")
 
         self.assertEqual(response.status_code, 403)
+
+    def test_dashboard_and_operations_pages_load_for_logged_in_user(self):
+        user = self._create_user("dashboard-user", role="admin")
+        self._login_via_session(user["id"])
+
+        dashboard_response = self.client.get("/")
+        operations_response = self.client.get("/operations")
+
+        self.assertEqual(dashboard_response.status_code, 200)
+        self.assertIn(b"NEECO II - AREA 1 OUTAGE MANAGEMENT SYSTEM", dashboard_response.data)
+        self.assertEqual(operations_response.status_code, 200)
+        self.assertIn(b"Upload .GPX file", operations_response.data)
 
     def test_supervisor_can_view_but_not_manage_audit_logs(self):
         user = self._create_user("supervisor-audit", role="supervisor")
@@ -223,6 +236,112 @@ class OutageAppTestCase(unittest.TestCase):
         )
         self.assertEqual(delete_response.status_code, 200)
         self.assertTrue(delete_response.get_json()["success"])
+
+    def test_interruption_monitoring_fields_can_be_updated(self):
+        user = self._create_user("monitoring-admin", role="admin")
+        csrf_token = self._login_via_session(user["id"])
+
+        create_response = self.client.post(
+            "/interruptions",
+            json={
+                "name": "Monitoring Outage",
+                "start_date": "2026-05-13",
+                "start_time": "08:00",
+                "end_date": "2026-05-13",
+                "end_time": "09:10",
+                "target_name": "TAL001",
+                "feeder_name": "F11 TAL.gpx",
+                "affected_towers": [{"name": "TAL001"}],
+                "matched_rows": [{
+                    "pol_id": "TAL001",
+                    "account_number": "12-3456-7890",
+                    "address": "Purok 3, Barangay San Miguel, Talavera",
+                    "kwhr": 24,
+                }],
+            },
+            headers={"X-CSRF-Token": csrf_token},
+        )
+        interruption_id = create_response.get_json()["interruption"]["id"]
+
+        update_response = self.client.patch(
+            f"/interruptions/{interruption_id}/monitoring",
+            json={
+                "status": "restored",
+                "action_taken": "Restored primary line",
+                "restored_date": "2026-05-13",
+                "restored_time": "09:10",
+                "remarks": "Crew completed restoration.",
+            },
+            headers={"X-CSRF-Token": csrf_token},
+        )
+
+        self.assertEqual(update_response.status_code, 200)
+        payload = update_response.get_json()
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["interruption"]["status"], "restored")
+        self.assertEqual(payload["interruption"]["actionTaken"], "Restored primary line")
+        self.assertEqual(payload["interruption"]["restoredDate"], datetime.now().strftime("%Y-%m-%d"))
+        self.assertRegex(payload["interruption"]["restoredTime"], r"^\d{2}:\d{2}$")
+        self.assertEqual(payload["interruption"]["remarks"], "Crew completed restoration.")
+        self.assertEqual(payload["dashboard"]["counters"]["restored"], 1)
+        self.assertEqual(payload["dashboard"]["rows"][0]["affectedArea"], "San Miguel")
+        self.assertEqual(payload["dashboard"]["rows"][0]["actionTaken"], "Restored primary line")
+        self.assertEqual(payload["dashboard"]["rows"][0]["restoredDate"], datetime.now().strftime("%Y-%m-%d"))
+        self.assertRegex(payload["dashboard"]["rows"][0]["restoredTime"], r"^\d{2}:\d{2}$")
+        self.assertIsInstance(payload["dashboard"]["rows"][0]["durationMinutes"], int)
+
+    def test_active_interruption_does_not_get_restored_defaults(self):
+        user = self._create_user("active-interrupt", role="operator")
+        csrf_token = self._login_via_session(user["id"])
+
+        response = self.client.post(
+            "/interruptions",
+            json={
+                "name": "Active Outage",
+                "start_date": "2026-05-13",
+                "start_time": "08:00",
+                "status": "active",
+                "target_name": "TAL001",
+                "affected_towers": [{"name": "TAL001"}],
+                "matched_rows": [{"pol_id": "TAL001", "account_number": "12-3456-7890", "kwhr": 24}],
+            },
+            headers={"X-CSRF-Token": csrf_token},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["interruption"]["status"], "active")
+        self.assertEqual(payload["interruption"]["restoredDate"], "")
+        dashboard = self.app_module.build_dashboard_model()
+        self.assertEqual(dashboard["rows"][0]["durationMinutes"], "")
+        self.assertEqual(dashboard["rows"][0]["restoredDate"], "")
+        self.assertEqual(dashboard["rows"][0]["estimatedKwhrLoss"], "0")
+        self.assertEqual(dashboard["rows"][0]["estimatedRevenueLoss"], "0")
+
+    def test_due_scheduled_interruption_counts_as_active(self):
+        user = self._create_user("scheduled-user", role="operator")
+        csrf_token = self._login_via_session(user["id"])
+        due_start = datetime.now() - timedelta(minutes=5)
+
+        response = self.client.post(
+            "/interruptions",
+            json={
+                "name": "Due Scheduled Outage",
+                "start_date": due_start.strftime("%Y-%m-%d"),
+                "start_time": due_start.strftime("%H:%M"),
+                "status": "scheduled",
+                "target_name": "TAL001",
+                "affected_towers": [{"name": "TAL001"}],
+                "matched_rows": [{"pol_id": "TAL001", "account_number": "12-3456-7890", "kwhr": 24}],
+            },
+            headers={"X-CSRF-Token": csrf_token},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        dashboard = self.app_module.build_dashboard_model()
+        self.assertEqual(dashboard["counters"]["active"], 1)
+        self.assertEqual(dashboard["counters"]["scheduled"], 0)
+        self.assertEqual(dashboard["rows"][0]["status"], "active")
 
 
 if __name__ == "__main__":
