@@ -470,7 +470,15 @@ def normalize_monitoring_fields(payload, existing=None):
         action_taken = "Restored"
     if action_taken and status != "restored":
         status = "restored"
-    if status == "restored" and previous_status != "restored" and requested_status == "restored":
+    has_explicit_restored_date = payload.get("restored_date") is not None
+    has_explicit_restored_time = payload.get("restored_time") is not None
+    if (
+        status == "restored"
+        and previous_status != "restored"
+        and requested_status == "restored"
+        and not has_explicit_restored_date
+        and not has_explicit_restored_time
+    ):
         now = datetime.now()
         restored_date = now.strftime("%Y-%m-%d")
         restored_time = now.strftime("%H:%M")
@@ -524,6 +532,17 @@ def _duration_loss_metrics(start_dt, duration_minutes, rows, dsm_rate=2.0148):
     }
 
 
+def _dashboard_duration_minutes(status, start_dt, restored_dt, now):
+    if not start_dt:
+        return ""
+    if status == "scheduled" and start_dt > now:
+        return ""
+    end_dt = restored_dt if status == "restored" and restored_dt else now
+    if end_dt < start_dt:
+        return ""
+    return int((end_dt - start_dt).total_seconds() // 60)
+
+
 def _clean_area_text(value):
     text = re.sub(r"\s+", " ", str(value or "")).strip(" ,")
     return text
@@ -560,16 +579,86 @@ def infer_affected_area(record):
     return re.sub(r"^(Tower|Transformer|Line Cut|Search Result):\s*", "", target_name, flags=re.IGNORECASE) or "-"
 
 
-def build_dashboard_model():
+def _normalize_numeric(value):
+    try:
+        return float(str(value or "0").replace(",", ""))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _dashboard_filter_options(rows):
+    return {
+        "statuses": ["active", "scheduled", "restored"],
+        "substations": sorted({row.get("substation") for row in rows if row.get("substation") and row.get("substation") != "-"}),
+        "feeders": sorted({row.get("feeder") for row in rows if row.get("feeder") and row.get("feeder") != "-"}),
+        "createdBy": sorted({row.get("createdBy") for row in rows if row.get("createdBy")}),
+    }
+
+
+def _dashboard_row_matches_filters(row, filters):
+    if not filters:
+        return True
+    status = _normalize_filter_text(filters.get("status")).lower()
+    substation = _normalize_filter_text(filters.get("substation")).lower()
+    feeder = _normalize_filter_text(filters.get("feeder")).lower()
+    created_by = _normalize_filter_text(filters.get("created_by")).lower()
+    search = _normalize_filter_text(filters.get("search")).lower()
+    date_from = _normalize_filter_date(filters.get("date_from"))
+    date_to = _normalize_filter_date(filters.get("date_to"))
+    row_date = _normalize_filter_date(row.get("startDate"))
+
+    if status and status != "all" and row.get("status") != status:
+        return False
+    if substation and substation != "all" and _normalize_filter_text(row.get("substation")).lower() != substation:
+        return False
+    if feeder and feeder != "all" and _normalize_filter_text(row.get("feeder")).lower() != feeder:
+        return False
+    if created_by and created_by != "all" and _normalize_filter_text(row.get("createdBy")).lower() != created_by:
+        return False
+    if date_from and (not row_date or row_date < date_from):
+        return False
+    if date_to and (not row_date or row_date > date_to):
+        return False
+    if search:
+        haystack = " ".join(str(row.get(key) or "") for key in (
+            "name",
+            "substation",
+            "feeder",
+            "feederName",
+            "affectedArea",
+            "remarks",
+            "actionTaken",
+        )).lower()
+        if search not in haystack:
+            return False
+    return True
+
+
+def _dashboard_counters(rows):
+    counters = {"total": len(rows), "active": 0, "scheduled": 0, "restored": 0}
+    for row in rows:
+        status = row.get("status") if row.get("status") in counters else "active"
+        counters[status] += 1
+    return counters
+
+
+def _dashboard_analytics(rows):
+    total_customers = sum(int(_normalize_numeric(row.get("customersAffected"))) for row in rows)
+    total_kwhr = sum(_normalize_numeric(row.get("estimatedKwhrLoss")) for row in rows)
+    total_revenue = sum(_normalize_numeric(row.get("estimatedRevenueLoss")) for row in rows)
+    durations = [int(_normalize_numeric(row.get("durationMinutes"))) for row in rows if _normalize_numeric(row.get("durationMinutes")) > 0]
+    return {
+        "totalCustomers": total_customers,
+        "totalKwhrLoss": round(total_kwhr, 4),
+        "totalRevenueLoss": round(total_revenue, 2),
+        "averageRestoredDurationMinutes": int(round(sum(durations) / len(durations))) if durations else 0,
+    }
+
+
+def build_dashboard_model(filters=None):
     now = datetime.now()
     records = [serialize_interruption_row(row) for row in list_interruption_rows()]
     dashboard_rows = []
-    counters = {
-        "total": len(records),
-        "active": 0,
-        "scheduled": 0,
-        "restored": 0,
-    }
 
     for record in records:
         start_dt = _parse_local_datetime(record.get("startDate"), record.get("startTime"))
@@ -580,17 +669,13 @@ def build_dashboard_model():
             restored_date=record.get("restoredDate"),
             restored_time=record.get("restoredTime"),
         )
-        counters[status] += 1
-
         feeder_name = record.get("feederName") or ""
         action_taken = record.get("actionTaken", "")
         is_restored = status == "restored" or bool(action_taken)
         dashboard_restored_date = record.get("restoredDate") if is_restored else ""
         dashboard_restored_time = record.get("restoredTime") if is_restored else ""
         restored_dt = _parse_local_datetime(dashboard_restored_date, dashboard_restored_time)
-        duration_minutes = ""
-        if is_restored and start_dt and restored_dt and restored_dt >= start_dt:
-            duration_minutes = int((restored_dt - start_dt).total_seconds() // 60)
+        duration_minutes = _dashboard_duration_minutes(status, start_dt, restored_dt, now)
         loss_metrics = _duration_loss_metrics(start_dt, duration_minutes, record.get("matchedRows"))
 
         dashboard_rows.append({
@@ -601,6 +686,7 @@ def build_dashboard_model():
             "feeder": infer_feeder_code(feeder_name) or feeder_name or "-",
             "feederName": feeder_name,
             "affectedArea": infer_affected_area(record),
+            "startDate": record.get("startDate") or "",
             "startTime": " ".join(part for part in [record.get("startDate"), record.get("startTime")] if part) or "-",
             "restoredDate": dashboard_restored_date if is_restored else "",
             "restoredTime": dashboard_restored_time if is_restored else "",
@@ -615,9 +701,15 @@ def build_dashboard_model():
             "createdAt": record.get("createdAt", ""),
         })
 
+    filtered_rows = [row for row in dashboard_rows if _dashboard_row_matches_filters(row, filters or {})]
+
     return {
-        "counters": counters,
-        "rows": dashboard_rows,
+        "counters": _dashboard_counters(filtered_rows),
+        "rows": filtered_rows,
+        "analytics": _dashboard_analytics(filtered_rows),
+        "filters": filters or {},
+        "filterOptions": _dashboard_filter_options(dashboard_rows),
+        "updatedAt": now.strftime("%Y-%m-%d %H:%M:%S"),
     }
 
 
@@ -2234,6 +2326,21 @@ def delete_interruption_record(interruption_id):
     return cursor.rowcount > 0
 
 
+def delete_all_interruption_records():
+    backup_path = create_timestamped_backup(app.config["AUTH_DB_PATH"], app.config["BACKUP_DIR"])
+    with get_app_db_connection() as connection:
+        count_row = connection.execute("SELECT COUNT(*) AS total FROM interruptions").fetchone()
+        total_rows = int((count_row["total"] if count_row else 0) or 0)
+        if total_rows > 0:
+            connection.execute("DELETE FROM interruptions")
+        connection.commit()
+    maybe_maintain_wal(force=True)
+    return {
+        "deleted_rows": total_rows,
+        "backup_path": backup_path,
+    }
+
+
 def update_interruption_monitoring_record(interruption_id, payload):
     existing = serialize_interruption_row(get_interruption_row(interruption_id))
     if not existing:
@@ -2600,6 +2707,24 @@ def index():
     return render_template("dashboard.html", dashboard=build_dashboard_model())
 
 
+@app.route("/dashboard/data", methods=["GET"])
+@login_required
+def dashboard_data():
+    filters = {
+        "status": request.args.get("status", ""),
+        "substation": request.args.get("substation", ""),
+        "feeder": request.args.get("feeder", ""),
+        "created_by": request.args.get("created_by", ""),
+        "date_from": request.args.get("date_from", ""),
+        "date_to": request.args.get("date_to", ""),
+        "search": request.args.get("search", ""),
+    }
+    return jsonify({
+        "success": True,
+        "dashboard": build_dashboard_model(filters=filters),
+    })
+
+
 @app.route("/operations")
 @login_required
 def operations():
@@ -2803,6 +2928,37 @@ def delete_interruption(interruption_id):
         },
     )
     return api_success("Interruption deleted successfully.")
+
+
+@app.route("/interruptions/delete-all", methods=["POST"])
+@role_required("can_manage_users")
+def delete_all_interruptions():
+    payload = request.get_json(silent=True) or {}
+    confirmation = str(payload.get("confirmation") or "").strip()
+    if confirmation != "DELETE ALL":
+        return api_error("Type DELETE ALL to confirm deleting every interruption record.", status_code=400)
+
+    try:
+        result = delete_all_interruption_records()
+    except DatabaseBusyError as exc:
+        return api_error(get_friendly_database_error_message(exc), status_code=503)
+    except Exception as exc:
+        return api_error(str(exc), status_code=500)
+
+    log_audit_event(
+        "delete_interruption",
+        details={
+            "source": "dashboard_bulk_delete",
+            "deleted_rows": result["deleted_rows"],
+            "backup_path": result["backup_path"],
+        },
+    )
+    return api_success(
+        f"Deleted {result['deleted_rows']} interruption record(s). A database backup was created first.",
+        deletedRows=result["deleted_rows"],
+        backupPath=result["backup_path"],
+        dashboard=build_dashboard_model(),
+    )
 
 
 @app.route("/interruptions/<int:interruption_id>/monitoring", methods=["PATCH"])

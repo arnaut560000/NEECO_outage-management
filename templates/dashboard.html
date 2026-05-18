@@ -10,7 +10,8 @@
 <body class="dashboard-page">
     <header class="dashboard-header">
         <div class="dashboard-header-main">
-            <div>
+            <div class="dashboard-title-block">
+                <span class="dashboard-eyebrow">Operations Command Center</span>
                 <h1>NEECO II - AREA 1 OUTAGE MANAGEMENT SYSTEM</h1>
                 <p>Monitor saved interruptions, affected areas, restoration status, and estimated outage impact.</p>
             </div>
@@ -37,21 +38,131 @@
 
     <main class="dashboard-main">
         <section class="dashboard-analytics" aria-label="Interruption analytics">
-            <article class="dashboard-metric total">
+            <article class="dashboard-metric total" data-counter-key="total">
                 <span>Total Interruption</span>
                 <strong>{{ dashboard.counters.total }}</strong>
+                <small>Saved records</small>
             </article>
-            <article class="dashboard-metric active">
+            <article class="dashboard-metric active" data-counter-key="active">
                 <span>Active Interruption</span>
                 <strong>{{ dashboard.counters.active }}</strong>
+                <small>Needs monitoring</small>
             </article>
-            <article class="dashboard-metric scheduled">
+            <article class="dashboard-metric scheduled" data-counter-key="scheduled">
                 <span>Scheduled Interruption</span>
                 <strong>{{ dashboard.counters.scheduled }}</strong>
+                <small>Planned work</small>
             </article>
-            <article class="dashboard-metric restored">
+            <article class="dashboard-metric restored" data-counter-key="restored">
                 <span>Restored Interruption</span>
                 <strong>{{ dashboard.counters.restored }}</strong>
+                <small>Completed cases</small>
+            </article>
+        </section>
+
+        <section class="dashboard-control-panel" aria-label="Dashboard filters">
+            <form id="dashboardFilterForm" class="dashboard-filter-form">
+                <label>
+                    <span>Status</span>
+                    <select id="dashboardStatusFilter" name="status">
+                        <option value="">All status</option>
+                        {% for status in dashboard.filterOptions.statuses %}
+                        <option value="{{ status }}">{{ status|capitalize }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label>
+                    <span>Substation</span>
+                    <select id="dashboardSubstationFilter" name="substation">
+                        <option value="">All substations</option>
+                        {% for substation in dashboard.filterOptions.substations %}
+                        <option value="{{ substation }}">{{ substation }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label>
+                    <span>Feeder</span>
+                    <select id="dashboardFeederFilter" name="feeder">
+                        <option value="">All feeders</option>
+                        {% for feeder in dashboard.filterOptions.feeders %}
+                        <option value="{{ feeder }}">{{ feeder }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label>
+                    <span>From</span>
+                    <input id="dashboardDateFromFilter" name="date_from" type="date">
+                </label>
+                <label>
+                    <span>To</span>
+                    <input id="dashboardDateToFilter" name="date_to" type="date">
+                </label>
+                <label class="dashboard-filter-search">
+                    <span>Search</span>
+                    <input id="dashboardSearchFilter" name="search" type="search" placeholder="Area, feeder, remarks">
+                </label>
+                <div class="dashboard-filter-actions">
+                    <button id="dashboardRefreshBtn" type="submit" class="primary-action">Refresh</button>
+                    <button id="dashboardClearFiltersBtn" type="button" class="secondary-action">Clear</button>
+                </div>
+            </form>
+            <p id="dashboardRefreshMeta" class="dashboard-refresh-meta">Updated {{ dashboard.updatedAt }}</p>
+        </section>
+
+        <section class="dashboard-insights" aria-label="Outage graph analytics">
+            <article class="dashboard-chart-panel dashboard-status-panel">
+                <div class="dashboard-panel-head">
+                    <div>
+                        <h2>Status Mix</h2>
+                        <p>Live distribution of interruption records.</p>
+                    </div>
+                    <span id="dashboardRestorationRate" class="dashboard-rate">0%</span>
+                </div>
+                <div class="dashboard-donut-layout">
+                    <div id="statusDonut" class="dashboard-donut" aria-label="Status mix chart"></div>
+                    <div id="statusLegend" class="dashboard-legend"></div>
+                </div>
+            </article>
+
+            <article class="dashboard-chart-panel dashboard-impact-panel">
+                <div class="dashboard-panel-head">
+                    <div>
+                        <h2>Customer Impact</h2>
+                        <p>Affected customers by monitoring status.</p>
+                    </div>
+                </div>
+                <div id="customerImpactChart" class="dashboard-bar-chart" aria-label="Customer impact chart"></div>
+            </article>
+
+            <article class="dashboard-chart-panel dashboard-loss-panel">
+                <div class="dashboard-panel-head">
+                    <div>
+                        <h2>Estimated Loss</h2>
+                        <p>Revenue and KWHR exposure across records.</p>
+                    </div>
+                </div>
+                <div id="impactSummary" class="dashboard-impact-summary"></div>
+            </article>
+        </section>
+
+        <section class="dashboard-breakdown-grid" aria-label="Operational breakdowns">
+            <article class="dashboard-chart-panel">
+                <div class="dashboard-panel-head">
+                    <div>
+                        <h2>Feeder Hotspots</h2>
+                        <p>Top feeders by affected customers.</p>
+                    </div>
+                </div>
+                <div id="feederChart" class="dashboard-rank-chart"></div>
+            </article>
+            <article class="dashboard-chart-panel">
+                <div class="dashboard-panel-head">
+                    <div>
+                        <h2>Substation Load</h2>
+                        <p>Interruption count and affected customers.</p>
+                    </div>
+                </div>
+                <div id="substationChart" class="dashboard-rank-chart"></div>
             </article>
         </section>
 
@@ -122,7 +233,49 @@
                 </table>
             </div>
         </section>
+
+        {% if current_permissions.can_manage_users %}
+        <section class="dashboard-danger-panel" aria-label="Danger zone">
+            <div>
+                <h2>Danger Zone</h2>
+                <p>Delete all saved interruption monitoring records after creating an automatic database backup.</p>
+            </div>
+            <button id="openDeleteAllInterruptionsBtn" type="button" class="danger-action">Delete All Interruptions</button>
+        </section>
+        {% endif %}
     </main>
+
+    <div id="dashboardToast" class="dashboard-toast hidden" role="status" aria-live="polite"></div>
+
+    {% if current_permissions.can_manage_users %}
+    <div id="deleteAllInterruptionsModal" class="modal hidden">
+        <div class="modal-backdrop" data-delete-all-close></div>
+        <div class="modal-card dashboard-delete-card">
+            <div class="modal-head">
+                <div>
+                    <h3>Delete All Interruptions</h3>
+                    <p class="viewer-meta">A database backup will be created before records are removed.</p>
+                </div>
+                <div class="viewer-actions">
+                    <button type="button" class="icon-btn" data-delete-all-close>Close</button>
+                </div>
+            </div>
+            <div class="dashboard-delete-warning">
+                <strong>This permanently clears the dashboard and records/history interruption list.</strong>
+                <span>Type DELETE ALL to confirm this bulk deletion.</span>
+            </div>
+            <form id="deleteAllInterruptionsForm" class="dashboard-delete-form">
+                <label>
+                    <span>Confirmation</span>
+                    <input id="deleteAllInterruptionsConfirm" type="text" autocomplete="off" placeholder="DELETE ALL">
+                </label>
+                <div class="dashboard-modal-actions">
+                    <button id="deleteAllInterruptionsSubmit" type="submit" class="danger-action">Delete All Records</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    {% endif %}
 
     <div id="affectedAreaModal" class="modal hidden">
         <div class="modal-backdrop" data-dashboard-close></div>

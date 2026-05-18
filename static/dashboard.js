@@ -11,9 +11,32 @@ const monitoringRestoredDate = document.getElementById("monitoringRestoredDate")
 const monitoringRestoredTime = document.getElementById("monitoringRestoredTime");
 const monitoringRemarks = document.getElementById("monitoringRemarks");
 const monitoringSaveBtn = document.getElementById("monitoringSaveBtn");
+const statusDonut = document.getElementById("statusDonut");
+const statusLegend = document.getElementById("statusLegend");
+const restorationRate = document.getElementById("dashboardRestorationRate");
+const customerImpactChart = document.getElementById("customerImpactChart");
+const impactSummary = document.getElementById("impactSummary");
+const feederChart = document.getElementById("feederChart");
+const substationChart = document.getElementById("substationChart");
+const dashboardFilterForm = document.getElementById("dashboardFilterForm");
+const dashboardClearFiltersBtn = document.getElementById("dashboardClearFiltersBtn");
+const dashboardRefreshBtn = document.getElementById("dashboardRefreshBtn");
+const dashboardRefreshMeta = document.getElementById("dashboardRefreshMeta");
+const dashboardToast = document.getElementById("dashboardToast");
+const openDeleteAllInterruptionsBtn = document.getElementById("openDeleteAllInterruptionsBtn");
+const deleteAllInterruptionsModal = document.getElementById("deleteAllInterruptionsModal");
+const deleteAllInterruptionsForm = document.getElementById("deleteAllInterruptionsForm");
+const deleteAllInterruptionsConfirm = document.getElementById("deleteAllInterruptionsConfirm");
+const deleteAllInterruptionsSubmit = document.getElementById("deleteAllInterruptionsSubmit");
 const csrfToken = window.csrfToken || "";
 let dashboardData = window.dashboardData || { counters: {}, rows: [] };
 let activeInterruption = null;
+let dashboardRefreshTimer = null;
+const statusConfig = {
+    active: { label: "Active", color: "#d6453d", soft: "#fff0ee" },
+    scheduled: { label: "Scheduled", color: "#d6a516", soft: "#fff8df" },
+    restored: { label: "Restored", color: "#26834b", soft: "#eaf8ef" },
+};
 
 function escapeHtml(value) {
     return String(value ?? "")
@@ -25,15 +48,8 @@ function escapeHtml(value) {
 }
 
 function updateCounters(counters = {}) {
-    const metricMap = {
-        total: "Total Interruption",
-        active: "Active Interruption",
-        scheduled: "Scheduled Interruption",
-        restored: "Restored Interruption",
-    };
     document.querySelectorAll(".dashboard-metric").forEach((metric) => {
-        const label = metric.querySelector("span")?.textContent || "";
-        const key = Object.entries(metricMap).find(([, text]) => text === label)?.[0];
+        const key = metric.getAttribute("data-counter-key");
         if (key) {
             metric.querySelector("strong").textContent = counters[key] ?? 0;
         }
@@ -89,10 +105,205 @@ function renderDashboard(nextDashboard) {
     dashboardData = nextDashboard || dashboardData;
     updateCounters(dashboardData.counters || {});
     renderDashboardRows(dashboardData.rows || []);
+    renderDashboardAnalytics(dashboardData);
+    if (dashboardRefreshMeta && dashboardData.updatedAt) {
+        dashboardRefreshMeta.textContent = `Updated ${dashboardData.updatedAt}`;
+    }
+}
+
+function parseNumber(value) {
+    if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+    const parsed = Number(String(value ?? "").replace(/[^\d.-]/g, ""));
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatCompactNumber(value, places = 0) {
+    const number = parseNumber(value);
+    return new Intl.NumberFormat("en", {
+        maximumFractionDigits: places,
+        minimumFractionDigits: 0,
+    }).format(number);
+}
+
+function formatPeso(value) {
+    return `PHP ${new Intl.NumberFormat("en", {
+        maximumFractionDigits: 2,
+        minimumFractionDigits: 2,
+    }).format(parseNumber(value))}`;
+}
+
+function summarizeRows(rows = []) {
+    return rows.reduce((summary, row) => {
+        const status = statusConfig[row.status] ? row.status : "active";
+        const customers = parseNumber(row.customersAffected);
+        const revenue = parseNumber(row.estimatedRevenueLoss);
+        const kwhr = parseNumber(row.estimatedKwhrLoss);
+        const duration = parseNumber(row.durationMinutes);
+        summary.statusCounts[status] = (summary.statusCounts[status] || 0) + 1;
+        summary.customersByStatus[status] = (summary.customersByStatus[status] || 0) + customers;
+        summary.totalCustomers += customers;
+        summary.totalRevenue += revenue;
+        summary.totalKwhr += kwhr;
+        if (duration > 0) {
+            summary.totalDuration += duration;
+            summary.durationCount += 1;
+        }
+        addGroupedMetric(summary.feeders, row.feeder || "-", customers, revenue, row.status);
+        addGroupedMetric(summary.substations, row.substation || "-", customers, revenue, row.status);
+        return summary;
+    }, {
+        statusCounts: { active: 0, scheduled: 0, restored: 0 },
+        customersByStatus: { active: 0, scheduled: 0, restored: 0 },
+        totalCustomers: 0,
+        totalRevenue: 0,
+        totalKwhr: 0,
+        totalDuration: 0,
+        durationCount: 0,
+        feeders: {},
+        substations: {},
+    });
+}
+
+function addGroupedMetric(groups, key, customers, revenue, status) {
+    const label = key || "-";
+    if (!groups[label]) {
+        groups[label] = { label, count: 0, customers: 0, revenue: 0, active: 0 };
+    }
+    groups[label].count += 1;
+    groups[label].customers += customers;
+    groups[label].revenue += revenue;
+    if (status === "active") {
+        groups[label].active += 1;
+    }
+}
+
+function renderDashboardAnalytics(data = {}) {
+    const rows = data.rows || [];
+    const counters = data.counters || {};
+    const summary = summarizeRows(rows);
+    renderStatusDonut(counters);
+    renderCustomerImpact(summary.customersByStatus);
+    renderImpactSummary(summary);
+    renderRankChart(feederChart, Object.values(summary.feeders), "customers");
+    renderRankChart(substationChart, Object.values(summary.substations), "count");
+}
+
+function renderStatusDonut(counters = {}) {
+    if (!statusDonut || !statusLegend) return;
+    const total = Math.max(0, parseNumber(counters.total));
+    const restored = parseNumber(counters.restored);
+    const rate = total ? Math.round((restored / total) * 100) : 0;
+    restorationRate.textContent = `${rate}% restored`;
+
+    if (!total) {
+        statusDonut.innerHTML = `<div class="dashboard-empty-chart">No records</div>`;
+        statusLegend.innerHTML = "";
+        return;
+    }
+
+    let offset = 25;
+    const segments = ["active", "scheduled", "restored"].map((key) => {
+        const value = parseNumber(counters[key]);
+        const length = total ? (value / total) * 100 : 0;
+        const segment = `<circle r="15.9155" cx="18" cy="18" fill="transparent" stroke="${statusConfig[key].color}" stroke-width="5" stroke-dasharray="${length} ${100 - length}" stroke-dashoffset="${offset}" />`;
+        offset -= length;
+        return segment;
+    }).join("");
+
+    statusDonut.innerHTML = `
+        <svg viewBox="0 0 36 36" role="img" aria-label="Status mix">
+            <circle r="15.9155" cx="18" cy="18" fill="transparent" stroke="#e6ece8" stroke-width="5"></circle>
+            ${segments}
+        </svg>
+        <div class="dashboard-donut-center">
+            <strong>${total}</strong>
+            <span>records</span>
+        </div>
+    `;
+    statusLegend.innerHTML = ["active", "scheduled", "restored"].map((key) => `
+        <p>
+            <i style="background:${statusConfig[key].color}"></i>
+            <span>${statusConfig[key].label}</span>
+            <strong>${formatCompactNumber(counters[key] || 0)}</strong>
+        </p>
+    `).join("");
+}
+
+function renderCustomerImpact(customersByStatus = {}) {
+    if (!customerImpactChart) return;
+    const entries = ["active", "scheduled", "restored"].map((key) => ({
+        key,
+        value: parseNumber(customersByStatus[key]),
+        ...statusConfig[key],
+    }));
+    const maxValue = Math.max(1, ...entries.map((entry) => entry.value));
+    customerImpactChart.innerHTML = entries.map((entry) => `
+        <div class="dashboard-bar-row">
+            <span>${entry.label}</span>
+            <div class="dashboard-bar-track">
+                <i style="width:${Math.max(4, (entry.value / maxValue) * 100)}%; background:${entry.color}"></i>
+            </div>
+            <strong>${formatCompactNumber(entry.value)}</strong>
+        </div>
+    `).join("");
+}
+
+function renderImpactSummary(summary) {
+    if (!impactSummary) return;
+    const serverAnalytics = dashboardData.analytics || {};
+    const totalCustomers = serverAnalytics.totalCustomers ?? summary.totalCustomers;
+    const totalKwhr = serverAnalytics.totalKwhrLoss ?? summary.totalKwhr;
+    const totalRevenue = serverAnalytics.totalRevenueLoss ?? summary.totalRevenue;
+    const averageDuration = serverAnalytics.averageRestoredDurationMinutes ?? (
+        summary.durationCount ? Math.round(summary.totalDuration / summary.durationCount) : 0
+    );
+    impactSummary.innerHTML = `
+        <p><span>Customers Affected</span><strong>${formatCompactNumber(totalCustomers)}</strong></p>
+        <p><span>Estimated KWHR Loss</span><strong>${formatCompactNumber(totalKwhr, 2)}</strong></p>
+        <p><span>Estimated Revenue Loss</span><strong>${formatPeso(totalRevenue)}</strong></p>
+        <p><span>Avg. Restored Duration</span><strong>${averageDuration ? `${averageDuration} min` : "-"}</strong></p>
+    `;
+}
+
+function renderRankChart(container, groups = [], mode = "customers") {
+    if (!container) return;
+    const ranked = groups
+        .sort((a, b) => (b[mode] || 0) - (a[mode] || 0) || a.label.localeCompare(b.label))
+        .slice(0, 5);
+    if (!ranked.length) {
+        container.innerHTML = `<div class="dashboard-empty-chart">No records yet</div>`;
+        return;
+    }
+    const maxValue = Math.max(1, ...ranked.map((item) => parseNumber(item[mode])));
+    container.innerHTML = ranked.map((item) => {
+        const value = parseNumber(item[mode]);
+        const detail = mode === "count"
+            ? `${formatCompactNumber(item.count)} records / ${formatCompactNumber(item.customers)} customers`
+            : `${formatCompactNumber(item.customers)} customers / ${formatPeso(item.revenue)}`;
+        return `
+            <div class="dashboard-rank-row">
+                <div>
+                    <strong>${escapeHtml(item.label)}</strong>
+                    <span>${escapeHtml(detail)}</span>
+                </div>
+                <div class="dashboard-rank-track">
+                    <i style="width:${Math.max(5, (value / maxValue) * 100)}%"></i>
+                </div>
+            </div>
+        `;
+    }).join("");
 }
 
 function setModalOpen(isOpen) {
     affectedAreaModal?.classList.toggle("hidden", !isOpen);
+}
+
+function setDeleteAllModalOpen(isOpen) {
+    deleteAllInterruptionsModal?.classList.toggle("hidden", !isOpen);
+    if (isOpen) {
+        deleteAllInterruptionsConfirm.value = "";
+        deleteAllInterruptionsConfirm?.focus();
+    }
 }
 
 function detailItem(label, value) {
@@ -154,6 +365,51 @@ async function fetchJson(url, options = {}) {
     return data;
 }
 
+function showDashboardToast(message, tone = "success") {
+    if (!dashboardToast) return;
+    dashboardToast.textContent = message;
+    dashboardToast.className = `dashboard-toast ${tone}`;
+    window.clearTimeout(showDashboardToast.timer);
+    showDashboardToast.timer = window.setTimeout(() => {
+        dashboardToast.classList.add("hidden");
+    }, 3200);
+}
+
+function dashboardFilterParams() {
+    const params = new URLSearchParams();
+    if (!dashboardFilterForm) return params;
+    new FormData(dashboardFilterForm).forEach((value, key) => {
+        const text = String(value || "").trim();
+        if (text) {
+            params.set(key, text);
+        }
+    });
+    return params;
+}
+
+async function refreshDashboard(options = {}) {
+    if (dashboardRefreshBtn) {
+        dashboardRefreshBtn.disabled = true;
+        dashboardRefreshBtn.textContent = "Refreshing...";
+    }
+    try {
+        const params = dashboardFilterParams();
+        const url = params.toString() ? `/dashboard/data?${params.toString()}` : "/dashboard/data";
+        const data = await fetchJson(url);
+        renderDashboard(data.dashboard);
+        if (options.toast) {
+            showDashboardToast(options.toast);
+        }
+    } catch (error) {
+        showDashboardToast(error.message || "Dashboard refresh failed.", "error");
+    } finally {
+        if (dashboardRefreshBtn) {
+            dashboardRefreshBtn.disabled = false;
+            dashboardRefreshBtn.textContent = "Refresh";
+        }
+    }
+}
+
 async function openAffectedArea(interruptionId) {
     const data = await fetchJson(`/interruptions/${encodeURIComponent(interruptionId)}`);
     activeInterruption = data.interruption;
@@ -164,7 +420,7 @@ async function openAffectedArea(interruptionId) {
 function updateRestoredFieldVisibility() {
     const shouldShow = monitoringStatus.value === "restored" || monitoringActionTaken.value.trim() !== "";
     document.querySelectorAll(".dashboard-system-restored-field").forEach((field) => {
-        field.classList.add("dashboard-hidden-field");
+        field.classList.toggle("dashboard-hidden-field", !shouldShow);
     });
     if (shouldShow && monitoringStatus.value === "restored" && !monitoringActionTaken.value.trim()) {
         monitoringActionTaken.value = "Restored";
@@ -191,16 +447,64 @@ document.addEventListener("click", (event) => {
     const openButton = event.target.closest("[data-open-manage]");
     if (openButton) {
         void openAffectedArea(openButton.getAttribute("data-open-manage")).catch((error) => {
-            alert(error.message || "Could not open management details.");
+            showDashboardToast(error.message || "Could not open management details.", "error");
         });
     }
     if (event.target.closest("[data-dashboard-close]")) {
         setModalOpen(false);
     }
+    if (event.target.closest("[data-delete-all-close]")) {
+        setDeleteAllModalOpen(false);
+    }
 });
 
 monitoringStatus?.addEventListener("change", updateRestoredFieldVisibility);
 monitoringActionTaken?.addEventListener("input", updateRestoredFieldVisibility);
+
+dashboardFilterForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void refreshDashboard();
+});
+
+dashboardFilterForm?.addEventListener("change", () => {
+    void refreshDashboard();
+});
+
+dashboardClearFiltersBtn?.addEventListener("click", () => {
+    dashboardFilterForm?.reset();
+    void refreshDashboard({ toast: "Dashboard filters cleared." });
+});
+
+openDeleteAllInterruptionsBtn?.addEventListener("click", () => {
+    setDeleteAllModalOpen(true);
+});
+
+deleteAllInterruptionsForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const confirmation = deleteAllInterruptionsConfirm?.value.trim() || "";
+    if (confirmation !== "DELETE ALL") {
+        showDashboardToast("Type DELETE ALL to confirm.", "error");
+        return;
+    }
+
+    deleteAllInterruptionsSubmit.disabled = true;
+    deleteAllInterruptionsSubmit.textContent = "Deleting...";
+    try {
+        const data = await fetchJson("/interruptions/delete-all", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ confirmation }),
+        });
+        setDeleteAllModalOpen(false);
+        renderDashboard(data.dashboard);
+        showDashboardToast(data.message || "All interruption records deleted.");
+    } catch (error) {
+        showDashboardToast(error.message || "Could not delete interruption records.", "error");
+    } finally {
+        deleteAllInterruptionsSubmit.disabled = false;
+        deleteAllInterruptionsSubmit.textContent = "Delete All Records";
+    }
+});
 
 monitoringForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -215,16 +519,16 @@ monitoringForm?.addEventListener("submit", async (event) => {
             body: JSON.stringify({
                 status: monitoringStatus.value,
                 action_taken: monitoringActionTaken.value,
-                restored_date: activeInterruption?.status === "restored" ? monitoringRestoredDate.value : "",
-                restored_time: activeInterruption?.status === "restored" ? monitoringRestoredTime.value : "",
+                restored_date: monitoringStatus.value === "restored" ? monitoringRestoredDate.value : "",
+                restored_time: monitoringStatus.value === "restored" ? monitoringRestoredTime.value : "",
                 remarks: monitoringRemarks.value,
             }),
         });
         activeInterruption = data.interruption;
-        renderDashboard(data.dashboard);
+        await refreshDashboard({ toast: "Monitoring update saved." });
         renderAffectedAreaDetails(activeInterruption);
     } catch (error) {
-        alert(error.message || "Could not save monitoring update.");
+        showDashboardToast(error.message || "Could not save monitoring update.", "error");
     } finally {
         monitoringSaveBtn.disabled = false;
         monitoringSaveBtn.textContent = "Save Monitoring Update";
@@ -232,3 +536,8 @@ monitoringForm?.addEventListener("submit", async (event) => {
 });
 
 renderDashboard(dashboardData);
+dashboardRefreshTimer = window.setInterval(() => {
+    if (!affectedAreaModal || affectedAreaModal.classList.contains("hidden")) {
+        void refreshDashboard();
+    }
+}, 60000);

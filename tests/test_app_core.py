@@ -280,26 +280,27 @@ class OutageAppTestCase(unittest.TestCase):
         self.assertTrue(payload["success"])
         self.assertEqual(payload["interruption"]["status"], "restored")
         self.assertEqual(payload["interruption"]["actionTaken"], "Restored primary line")
-        self.assertEqual(payload["interruption"]["restoredDate"], datetime.now().strftime("%Y-%m-%d"))
-        self.assertRegex(payload["interruption"]["restoredTime"], r"^\d{2}:\d{2}$")
+        self.assertEqual(payload["interruption"]["restoredDate"], "2026-05-13")
+        self.assertEqual(payload["interruption"]["restoredTime"], "09:10")
         self.assertEqual(payload["interruption"]["remarks"], "Crew completed restoration.")
         self.assertEqual(payload["dashboard"]["counters"]["restored"], 1)
         self.assertEqual(payload["dashboard"]["rows"][0]["affectedArea"], "San Miguel")
         self.assertEqual(payload["dashboard"]["rows"][0]["actionTaken"], "Restored primary line")
-        self.assertEqual(payload["dashboard"]["rows"][0]["restoredDate"], datetime.now().strftime("%Y-%m-%d"))
-        self.assertRegex(payload["dashboard"]["rows"][0]["restoredTime"], r"^\d{2}:\d{2}$")
+        self.assertEqual(payload["dashboard"]["rows"][0]["restoredDate"], "2026-05-13")
+        self.assertEqual(payload["dashboard"]["rows"][0]["restoredTime"], "09:10")
         self.assertIsInstance(payload["dashboard"]["rows"][0]["durationMinutes"], int)
 
     def test_active_interruption_does_not_get_restored_defaults(self):
         user = self._create_user("active-interrupt", role="operator")
         csrf_token = self._login_via_session(user["id"])
+        active_start = datetime.now() - timedelta(minutes=75)
 
         response = self.client.post(
             "/interruptions",
             json={
                 "name": "Active Outage",
-                "start_date": "2026-05-13",
-                "start_time": "08:00",
+                "start_date": active_start.strftime("%Y-%m-%d"),
+                "start_time": active_start.strftime("%H:%M"),
                 "status": "active",
                 "target_name": "TAL001",
                 "affected_towers": [{"name": "TAL001"}],
@@ -313,10 +314,10 @@ class OutageAppTestCase(unittest.TestCase):
         self.assertEqual(payload["interruption"]["status"], "active")
         self.assertEqual(payload["interruption"]["restoredDate"], "")
         dashboard = self.app_module.build_dashboard_model()
-        self.assertEqual(dashboard["rows"][0]["durationMinutes"], "")
+        self.assertGreaterEqual(dashboard["rows"][0]["durationMinutes"], 74)
         self.assertEqual(dashboard["rows"][0]["restoredDate"], "")
-        self.assertEqual(dashboard["rows"][0]["estimatedKwhrLoss"], "0")
-        self.assertEqual(dashboard["rows"][0]["estimatedRevenueLoss"], "0")
+        self.assertNotEqual(dashboard["rows"][0]["estimatedKwhrLoss"], "0")
+        self.assertNotEqual(dashboard["rows"][0]["estimatedRevenueLoss"], "0")
 
     def test_due_scheduled_interruption_counts_as_active(self):
         user = self._create_user("scheduled-user", role="operator")
@@ -342,6 +343,102 @@ class OutageAppTestCase(unittest.TestCase):
         self.assertEqual(dashboard["counters"]["active"], 1)
         self.assertEqual(dashboard["counters"]["scheduled"], 0)
         self.assertEqual(dashboard["rows"][0]["status"], "active")
+
+    def test_dashboard_data_endpoint_filters_records(self):
+        user = self._create_user("dashboard-filter-admin", role="admin")
+        csrf_token = self._login_via_session(user["id"])
+
+        self.client.post(
+            "/interruptions",
+            json={
+                "name": "Talavera Active",
+                "start_date": "2026-05-13",
+                "start_time": "08:00",
+                "status": "active",
+                "target_name": "TAL001",
+                "feeder_name": "F12 TAL FINAL.gpx",
+                "affected_towers": [{"name": "TAL001"}],
+                "matched_rows": [{"pol_id": "TAL001", "account_number": "12-3456-7890", "kwhr": 24}],
+            },
+            headers={"X-CSRF-Token": csrf_token},
+        )
+        self.client.post(
+            "/interruptions",
+            json={
+                "name": "Guimba Restored",
+                "start_date": "2026-05-14",
+                "start_time": "08:00",
+                "status": "restored",
+                "restored_date": "2026-05-14",
+                "restored_time": "09:00",
+                "target_name": "GBA001",
+                "feeder_name": "F41 GBA.gpx",
+                "affected_towers": [{"name": "GBA001"}],
+                "matched_rows": [{"pol_id": "GBA001", "account_number": "12-3456-7891", "kwhr": 12}],
+            },
+            headers={"X-CSRF-Token": csrf_token},
+        )
+
+        response = self.client.get("/dashboard/data?status=active&feeder=F12")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["dashboard"]["counters"]["total"], 1)
+        self.assertEqual(payload["dashboard"]["counters"]["active"], 1)
+        self.assertEqual(payload["dashboard"]["rows"][0]["name"], "Talavera Active")
+        self.assertIn("F12", payload["dashboard"]["filterOptions"]["feeders"])
+        self.assertIn("Guimba", payload["dashboard"]["filterOptions"]["substations"])
+
+    def test_delete_all_interruptions_requires_admin_and_confirmation(self):
+        operator = self._create_user("bulk-delete-operator", role="operator")
+        operator_csrf = self._login_via_session(operator["id"])
+
+        create_response = self.client.post(
+            "/interruptions",
+            json={
+                "name": "Bulk Delete Candidate",
+                "start_date": "2026-05-13",
+                "start_time": "08:00",
+                "status": "active",
+                "target_name": "TAL001",
+                "affected_towers": [{"name": "TAL001"}],
+                "matched_rows": [{"pol_id": "TAL001", "account_number": "12-3456-7890", "kwhr": 24}],
+            },
+            headers={"X-CSRF-Token": operator_csrf},
+        )
+        self.assertEqual(create_response.status_code, 200)
+
+        blocked_response = self.client.post(
+            "/interruptions/delete-all",
+            json={"confirmation": "DELETE ALL"},
+            headers={"X-CSRF-Token": operator_csrf},
+        )
+        self.assertEqual(blocked_response.status_code, 403)
+
+        admin = self._create_user("bulk-delete-admin", role="admin")
+        admin_csrf = self._login_via_session(admin["id"], csrf_token="admin-bulk-delete-csrf")
+        rejected_response = self.client.post(
+            "/interruptions/delete-all",
+            json={"confirmation": "delete all"},
+            headers={"X-CSRF-Token": admin_csrf},
+        )
+        self.assertEqual(rejected_response.status_code, 400)
+        self.assertEqual(len(self.client.get("/interruptions").get_json()["interruptions"]), 1)
+
+        delete_response = self.client.post(
+            "/interruptions/delete-all",
+            json={"confirmation": "DELETE ALL"},
+            headers={"X-CSRF-Token": admin_csrf},
+        )
+
+        self.assertEqual(delete_response.status_code, 200)
+        payload = delete_response.get_json()
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["deletedRows"], 1)
+        self.assertTrue(os.path.exists(payload["backupPath"]))
+        self.assertEqual(payload["dashboard"]["counters"]["total"], 0)
+        self.assertEqual(len(self.client.get("/interruptions").get_json()["interruptions"]), 0)
 
 
 if __name__ == "__main__":
