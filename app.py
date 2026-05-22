@@ -680,8 +680,10 @@ def _dashboard_row_matches_filters(row, filters):
             "feeder",
             "feederName",
             "affectedArea",
+            "selectedPolId",
             "remarks",
             "actionTaken",
+            "causeOfInterruption",
         )).lower()
         if search not in haystack:
             return False
@@ -739,6 +741,7 @@ def build_dashboard_model(filters=None):
             "substation": infer_substation_name(feeder_name),
             "feeder": infer_feeder_code(feeder_name) or feeder_name or "-",
             "feederName": feeder_name,
+            "selectedPolId": infer_selected_pol_id(record),
             "affectedArea": infer_affected_area(record),
             "startDate": record.get("startDate") or "",
             "startTime": " ".join(part for part in [record.get("startDate"), record.get("startTime")] if part) or "-",
@@ -747,6 +750,7 @@ def build_dashboard_model(filters=None):
             "actionTaken": action_taken,
             "durationMinutes": duration_minutes,
             "customersAffected": record.get("totalAffectedAccounts", 0),
+            "causeOfInterruption": record.get("causeOfInterruption") or "unknown",
             "remarks": record.get("remarks") or record.get("traceConfidence", "confirmed").replace("_", " ").title(),
             "estimatedKwhrLoss": _format_number(loss_metrics["kwhr_loss"], places=4),
             "estimatedRevenueLoss": _format_number(loss_metrics["revenue_loss"], places=2),
@@ -786,6 +790,7 @@ def serialize_interruption_row(row):
             "action_taken": row["action_taken"] if "action_taken" in row.keys() else "",
             "restored_date": row["restored_date"] if "restored_date" in row.keys() else "",
             "restored_time": row["restored_time"] if "restored_time" in row.keys() else "",
+            "cuase_of_interruption": row["cause_of_interruption"] if "cause_of_interruption" in row.key() else "unknown",
             "remarks": row["remarks"] if "remarks" in row.keys() else "",
             "start_date": row["start_date"] or "",
             "start_time": row["start_time"] or "",
@@ -816,6 +821,7 @@ def serialize_interruption_row(row):
         "actionTaken": monitoring["actionTaken"],
         "restoredDate": monitoring["restoredDate"],
         "restoredTime": monitoring["restoredTime"],
+        "cuaseOfInterruption": monitoring[cuaseOfInterruption"],
         "remarks": monitoring["remarks"],
         "feederName": row["feeder_name"] or "",
         "totalPolId": summary_counts["totalPolId"],
@@ -836,6 +842,7 @@ def serialize_interruption_summary_row(row):
             "action_taken": row["action_taken"] if "action_taken" in row.keys() else "",
             "restored_date": row["restored_date"] if "restored_date" in row.keys() else "",
             "restored_time": row["restored_time"] if "restored_time" in row.keys() else "",
+            "cuase_of_interruption": row["cause_of_interruption"] if "cause_of_interruption" in row.keys() else"unknown",
             "remarks": row["remarks"] if "remarks" in row.keys() else "",
             "start_date": row["start_date"] or "",
             "start_time": row["start_time"] or "",
@@ -865,6 +872,7 @@ def serialize_interruption_summary_row(row):
         "actionTaken": monitoring["actionTaken"],
         "restoredDate": monitoring["restoredDate"],
         "restoredTime": monitoring["restoredTime"],
+        "causeOfInterruption": monitoring["causeOfInterruption"],
         "remarks": monitoring["remarks"],
         "feederName": row["feeder_name"] or "",
         "totalPolId": summary_counts["totalPolId"],
@@ -2117,6 +2125,7 @@ def list_interruption_rows():
                 action_taken,
                 restored_date,
                 restored_time,
+                cause_of_interruption,
                 remarks,
                 created_by,
                 created_at
@@ -2150,6 +2159,7 @@ def list_interruption_summary_rows():
                 action_taken,
                 restored_date,
                 restored_time,
+                cause_of_interruption,
                 remarks,
                 created_by,
                 created_at
@@ -2249,6 +2259,7 @@ def get_interruption_row(interruption_id):
                 action_taken,
                 restored_date,
                 restored_time,
+                cause_of_interruption,
                 remarks,
                 created_by,
                 created_at
@@ -2333,9 +2344,10 @@ def create_interruption_record(payload, created_by):
                 action_taken,
                 restored_date,
                 restored_time,
+                cause_of_interruption,
                 remarks,
                 created_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 normalized_payload["name"],
@@ -2364,6 +2376,7 @@ def create_interruption_record(payload, created_by):
                 monitoring["actionTaken"],
                 monitoring["restoredDate"],
                 monitoring["restoredTime"],
+                monitoring["causeOfInterruption"],
                 monitoring["remarks"],
                 created_by,
             ),
@@ -2408,6 +2421,7 @@ def update_interruption_monitoring_record(interruption_id, payload):
                 action_taken = ?,
                 restored_date = ?,
                 restored_time = ?,
+                cause_of_interruption = ?,
                 remarks = ?
             WHERE id = ?
             """,
@@ -2416,6 +2430,7 @@ def update_interruption_monitoring_record(interruption_id, payload):
                 monitoring["actionTaken"],
                 monitoring["restoredDate"],
                 monitoring["restoredTime"],
+                monitoring["causeOfInterruption"],
                 monitoring["remarks"],
                 interruption_id,
             ),
@@ -2758,7 +2773,7 @@ def logout():
 @app.route("/")
 @login_required
 def index():
-    return render_template("dashboard.html", dashboard=build_dashboard_model())
+    return render_template("dashboard.html", dashboard=build_dashboard_model(), interruption_causes=INTERRUPTION_CAUSES)
 
 
 @app.route("/dashboard/data", methods=["GET"])
