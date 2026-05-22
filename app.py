@@ -228,6 +228,7 @@ def init_interruptions_db(db_path):
         _ensure_table_column(connection, "interruptions", "action_taken", "TEXT NOT NULL DEFAULT ''")
         _ensure_table_column(connection, "interruptions", "restored_date", "TEXT NOT NULL DEFAULT ''")
         _ensure_table_column(connection, "interruptions", "restored_time", "TEXT NOT NULL DEFAULT ''")
+        _ensure_table_column(connection, "interruptions", "cause_of_interruption", "TEXT NOT NULL DEFAULT 'unknown'")
         _ensure_table_column(connection, "interruptions", "remarks", "TEXT NOT NULL DEFAULT ''")
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_interruptions_created_at ON interruptions(datetime(created_at) DESC, id DESC)"
