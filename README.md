@@ -186,7 +186,7 @@ Notes:
 | `OUTAGE_PROXY_FIX_X_HOST` | Trusted proxy count for forwarded host | `1` | Optional |
 | `OUTAGE_DEBUG` | Flask debug mode | `1` | `0` |
 | `OUTAGE_MAX_UPLOAD_BYTES` | Global request upload cap | `31457280` | Optional |
-| `OUTAGE_MAX_FEEDER_UPLOAD_BYTES` | GPX upload cap | `5242880` | Optional |
+| `OUTAGE_MAX_FEEDER_UPLOAD_BYTES` | GPX upload cap | `15728640` | Optional |
 | `OUTAGE_MAX_XLSX_UPLOAD_BYTES` | XLSX upload cap | `20971520` | Optional |
 | `OUTAGE_MAX_KML_UPLOAD_BYTES` | KML upload cap | `20971520` | Optional |
 | `OUTAGE_SQLITE_BUSY_TIMEOUT_MS` | SQLite busy timeout | `10000` | Optional |
