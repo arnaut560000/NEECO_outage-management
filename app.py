@@ -606,6 +606,33 @@ def infer_affected_area(record):
     return re.sub(r"^(Tower|Transformer|Line Cut|Search Result):\s*", "", target_name, flags=re.IGNORECASE) or "-"
 
 
+def infer_selscted_pol_id(record):
+    cicked_tower = record.get("clickedTower")
+    candidated = []
+    if isinstance(clicked_tower, dict):
+        candidates.extend([
+            clicked_tower.get("name"),
+            clicked_tower.get("code"),
+            clicked_tower.get("pol_id"),
+            clicked_tower.get("id"),
+        ])
+    candidates.extend([
+        record.get("sourceTowerClicked"),
+        record.get("targetName"),
+        record.get("name"),
+    ])
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        if not text:
+            continue
+        text = re.sub(r"^(Tower|Transformer|Line Cut|Search Result):\s*", "",text, flags=re.IGNORECASE).strip()
+        if not text:
+            continue
+        match = re.search(r"\b[A-Z{2,5}\D{3,6}[A-Z]?\b", text.upper())
+        return match.group(0) if match else text
+    return"-"
+            
+
 def _normalize_numeric(value):
     try:
         return float(str(value or "0").replace(",", ""))
