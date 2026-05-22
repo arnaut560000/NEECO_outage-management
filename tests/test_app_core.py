@@ -270,6 +270,7 @@ class OutageAppTestCase(unittest.TestCase):
                 "action_taken": "Restored primary line",
                 "restored_date": "2026-05-13",
                 "restored_time": "09:10",
+                "cause_of_interruption": "trees",
                 "remarks": "Crew completed restoration.",
             },
             headers={"X-CSRF-Token": csrf_token},
@@ -280,12 +281,15 @@ class OutageAppTestCase(unittest.TestCase):
         self.assertTrue(payload["success"])
         self.assertEqual(payload["interruption"]["status"], "restored")
         self.assertEqual(payload["interruption"]["actionTaken"], "Restored primary line")
+        self.assertEqual(payload["interruption"]["causeOfInterruption"], "trees")
         self.assertEqual(payload["interruption"]["restoredDate"], "2026-05-13")
         self.assertEqual(payload["interruption"]["restoredTime"], "09:10")
         self.assertEqual(payload["interruption"]["remarks"], "Crew completed restoration.")
         self.assertEqual(payload["dashboard"]["counters"]["restored"], 1)
         self.assertEqual(payload["dashboard"]["rows"][0]["affectedArea"], "San Miguel")
         self.assertEqual(payload["dashboard"]["rows"][0]["actionTaken"], "Restored primary line")
+        self.assertEqual(payload["dashboard"]["rows"][0]["causeOfInterruption"], "trees")
+        self.assertEqual(payload["dashboard"]["rows"][0]["selectedPolId"], "TAL001")
         self.assertEqual(payload["dashboard"]["rows"][0]["restoredDate"], "2026-05-13")
         self.assertEqual(payload["dashboard"]["rows"][0]["restoredTime"], "09:10")
         self.assertIsInstance(payload["dashboard"]["rows"][0]["durationMinutes"], int)
@@ -387,6 +391,8 @@ class OutageAppTestCase(unittest.TestCase):
         self.assertEqual(payload["dashboard"]["counters"]["total"], 1)
         self.assertEqual(payload["dashboard"]["counters"]["active"], 1)
         self.assertEqual(payload["dashboard"]["rows"][0]["name"], "Talavera Active")
+        self.assertEqual(payload["dashboard"]["rows"][0]["selectedPolId"], "TAL001")
+        self.assertEqual(payload["dashboard"]["rows"][0]["causeOfInterruption"], "unknown")
         self.assertIn("F12", payload["dashboard"]["filterOptions"]["feeders"])
         self.assertIn("Guimba", payload["dashboard"]["filterOptions"]["substations"])
 

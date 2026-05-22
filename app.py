@@ -606,9 +606,9 @@ def infer_affected_area(record):
     return re.sub(r"^(Tower|Transformer|Line Cut|Search Result):\s*", "", target_name, flags=re.IGNORECASE) or "-"
 
 
-def infer_selscted_pol_id(record):
-    cicked_tower = record.get("clickedTower")
-    candidated = []
+def infer_selected_pol_id(record):
+    clicked_tower = record.get("clickedTower")
+    candidates = []
     if isinstance(clicked_tower, dict):
         candidates.extend([
             clicked_tower.get("name"),
@@ -625,12 +625,12 @@ def infer_selscted_pol_id(record):
         text = str(candidate or "").strip()
         if not text:
             continue
-        text = re.sub(r"^(Tower|Transformer|Line Cut|Search Result):\s*", "",text, flags=re.IGNORECASE).strip()
+        text = re.sub(r"^(Tower|Transformer|Line Cut|Search Result):\s*", "", text, flags=re.IGNORECASE).strip()
         if not text:
             continue
-        match = re.search(r"\b[A-Z{2,5}\D{3,6}[A-Z]?\b", text.upper())
+        match = re.search(r"\b[A-Z]{2,5}\d{3,6}[A-Z]?\b", text.upper())
         return match.group(0) if match else text
-    return"-"
+    return "-"
             
 
 def _normalize_numeric(value):
@@ -790,7 +790,7 @@ def serialize_interruption_row(row):
             "action_taken": row["action_taken"] if "action_taken" in row.keys() else "",
             "restored_date": row["restored_date"] if "restored_date" in row.keys() else "",
             "restored_time": row["restored_time"] if "restored_time" in row.keys() else "",
-            "cuase_of_interruption": row["cause_of_interruption"] if "cause_of_interruption" in row.key() else "unknown",
+            "cause_of_interruption": row["cause_of_interruption"] if "cause_of_interruption" in row.keys() else "unknown",
             "remarks": row["remarks"] if "remarks" in row.keys() else "",
             "start_date": row["start_date"] or "",
             "start_time": row["start_time"] or "",
@@ -821,7 +821,7 @@ def serialize_interruption_row(row):
         "actionTaken": monitoring["actionTaken"],
         "restoredDate": monitoring["restoredDate"],
         "restoredTime": monitoring["restoredTime"],
-        "cuaseOfInterruption": monitoring[cuaseOfInterruption"],
+        "causeOfInterruption": monitoring["causeOfInterruption"],
         "remarks": monitoring["remarks"],
         "feederName": row["feeder_name"] or "",
         "totalPolId": summary_counts["totalPolId"],
@@ -842,7 +842,7 @@ def serialize_interruption_summary_row(row):
             "action_taken": row["action_taken"] if "action_taken" in row.keys() else "",
             "restored_date": row["restored_date"] if "restored_date" in row.keys() else "",
             "restored_time": row["restored_time"] if "restored_time" in row.keys() else "",
-            "cuase_of_interruption": row["cause_of_interruption"] if "cause_of_interruption" in row.keys() else"unknown",
+            "cause_of_interruption": row["cause_of_interruption"] if "cause_of_interruption" in row.keys() else "unknown",
             "remarks": row["remarks"] if "remarks" in row.keys() else "",
             "start_date": row["start_date"] or "",
             "start_time": row["start_time"] or "",

@@ -181,6 +181,7 @@
                         <tr>
                             <th>SS</th>
                             <th>Feeder</th>
+                            <th>Selected Pol ID</th>
                             <th>Affected Area</th>
                             <th>Start Time</th>
                             <th>Restored Date</th>
@@ -188,6 +189,7 @@
                             <th>Action Taken</th>
                             <th>Duration - Minutes</th>
                             <th>No. of Cust Affected</th>
+                            <th>Cause of Interruption</th>
                             <th>Remarks</th>
                             <th>Estimated KWHR Loss</th>
                             <th>Estimated Revenue Loss</th>
@@ -205,6 +207,7 @@
                                     <span>{{ row.feederName }}</span>
                                     {% endif %}
                                 </td>
+                                <td>{{ row.selectedPolId }}</td>
                                 <td><a class="dashboard-link-btn" href="{{ url_for('operations') }}?interruption_id={{ row.id }}&open_viewer=1">{{ row.affectedArea }}</a></td>
                                 <td>{{ row.startTime }}</td>
                                 <td>{{ row.restoredDate or "-" }}</td>
@@ -218,6 +221,7 @@
                                 </td>
                                 <td>{{ row.durationMinutes if row.durationMinutes != "" else "-" }}</td>
                                 <td>{{ row.customersAffected }}</td>
+                                <td>{{ row.causeOfInterruption|replace("_", " ")|title }}</td>
                                 <td>{{ row.remarks }}</td>
                                 <td>{{ row.estimatedKwhrLoss }}</td>
                                 <td>PHP {{ row.estimatedRevenueLoss }}</td>
@@ -226,7 +230,7 @@
                             {% endfor %}
                         {% else %}
                             <tr>
-                                <td colspan="13" class="dashboard-empty-cell">No saved interruptions yet. Open the tracing map to upload a feeder GPX and save an interruption.</td>
+                                <td colspan="15" class="dashboard-empty-cell">No saved interruptions yet. Open the tracing map to upload a feeder GPX and save an interruption.</td>
                             </tr>
                         {% endif %}
                     </tbody>
@@ -303,6 +307,14 @@
                 <label>
                     <span>Action Taken</span>
                     <input id="monitoringActionTaken" type="text" placeholder="Example: Restored, isolated, transferred load">
+                </label>
+                <label>
+                    <span>Cause of Interruption</span>
+                    <select id="monitoringCauseOfInterruption">
+                        {% for cause in interruption_causes %}
+                        <option value="{{ cause }}">{{ cause|title }}</option>
+                        {% endfor %}
+                    </select>
                 </label>
                 <label class="dashboard-system-restored-field">
                     <span>Restored Date</span>

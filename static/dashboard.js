@@ -9,6 +9,7 @@ const monitoringStatus = document.getElementById("monitoringStatus");
 const monitoringActionTaken = document.getElementById("monitoringActionTaken");
 const monitoringRestoredDate = document.getElementById("monitoringRestoredDate");
 const monitoringRestoredTime = document.getElementById("monitoringRestoredTime");
+const monitoringCauseOfInterruption = document.getElementById("monitoringCauseOfInterruption");
 const monitoringRemarks = document.getElementById("monitoringRemarks");
 const monitoringSaveBtn = document.getElementById("monitoringSaveBtn");
 const statusDonut = document.getElementById("statusDonut");
@@ -68,12 +69,20 @@ function capitalize(value) {
     return text ? `${text[0].toUpperCase()}${text.slice(1)}` : "";
 }
 
+function formatCause(value) {
+    return String(value || "unknown")
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(capitalize)
+        .join(" ");
+}
+
 function renderDashboardRows(rows = []) {
     if (!dashboardTableBody) return;
     if (!rows.length) {
         dashboardTableBody.innerHTML = `
             <tr>
-                <td colspan="13" class="dashboard-empty-cell">No saved interruptions yet. Open the tracing map to upload a feeder GPX and save an interruption.</td>
+                <td colspan="15" class="dashboard-empty-cell">No saved interruptions yet. Open the tracing map to upload a feeder GPX and save an interruption.</td>
             </tr>
         `;
         return;
@@ -86,6 +95,7 @@ function renderDashboardRows(rows = []) {
                 <strong>${escapeHtml(row.feeder)}</strong>
                 ${row.feederName && row.feederName !== row.feeder ? `<span>${escapeHtml(row.feederName)}</span>` : ""}
             </td>
+            <td>${escapeHtml(row.selectedPolId || "-")}</td>
             <td><a class="dashboard-link-btn" href="/operations?interruption_id=${encodeURIComponent(row.id)}&open_viewer=1">${escapeHtml(row.affectedArea)}</a></td>
             <td>${escapeHtml(row.startTime)}</td>
             <td>${escapeHtml(row.restoredDate || "-")}</td>
@@ -93,6 +103,7 @@ function renderDashboardRows(rows = []) {
             <td>${statusPill(row)}</td>
             <td>${row.durationMinutes !== "" ? escapeHtml(row.durationMinutes) : "-"}</td>
             <td>${escapeHtml(row.customersAffected)}</td>
+            <td>${escapeHtml(formatCause(row.causeOfInterruption))}</td>
             <td>${escapeHtml(row.remarks)}</td>
             <td>${escapeHtml(row.estimatedKwhrLoss)}</td>
             <td>PHP ${escapeHtml(row.estimatedRevenueLoss)}</td>
@@ -334,8 +345,10 @@ function renderAffectedAreaDetails(interruption) {
         detailItem("Status", row.status || interruption.status),
         detailItem("Substation", row.substation),
         detailItem("Feeder", row.feederName || interruption.feederName),
+        detailItem("Selected Pol ID", row.selectedPolId),
         detailItem("Affected Area", row.affectedArea || interruption.targetName),
         detailItem("Customers Affected", row.customersAffected ?? interruption.totalAffectedAccounts),
+        detailItem("Cause of Interruption", formatCause(row.causeOfInterruption || interruption.causeOfInterruption)),
         detailItem("Estimated KWHR Loss", row.estimatedKwhrLoss),
         detailItem("Estimated Revenue Loss", row.estimatedRevenueLoss ? `PHP ${row.estimatedRevenueLoss}` : ""),
         detailItem("Created By", row.createdBy || interruption.createdBy),
@@ -347,6 +360,7 @@ function renderAffectedAreaDetails(interruption) {
     monitoringActionTaken.value = interruption.actionTaken || row.actionTaken || "";
     monitoringRestoredDate.value = interruption.restoredDate || row.restoredDate || interruption.endDate || "";
     monitoringRestoredTime.value = interruption.restoredTime || row.restoredTime || interruption.endTime || "";
+    monitoringCauseOfInterruption.value = interruption.causeOfInterruption || row.causeOfInterruption || "unknown";
     monitoringRemarks.value = interruption.remarks || row.remarks || "";
     updateRestoredFieldVisibility();
 }
@@ -521,6 +535,7 @@ monitoringForm?.addEventListener("submit", async (event) => {
                 action_taken: monitoringActionTaken.value,
                 restored_date: monitoringStatus.value === "restored" ? monitoringRestoredDate.value : "",
                 restored_time: monitoringStatus.value === "restored" ? monitoringRestoredTime.value : "",
+                cause_of_interruption: monitoringCauseOfInterruption.value,
                 remarks: monitoringRemarks.value,
             }),
         });
