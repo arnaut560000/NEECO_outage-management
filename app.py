@@ -458,6 +458,11 @@ def normalize_monitoring_status(value, *, start_date="", start_time="", restored
     return "active"
 
 
+def normalize_interruption_cause(value, default="unknown"):
+    normalized = str(value or"").strip().lower()
+    return normalized if normalized in INTERRUPTION_CAUSES else default
+
+
 def normalize_monitoring_fields(payload, existing=None):
     existing = existing or {}
     previous_status = str(existing.get("status") or "").strip().lower()
