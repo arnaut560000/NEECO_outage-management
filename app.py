@@ -486,7 +486,12 @@ def normalize_monitoring_fields(payload, existing=None):
         else existing.get("restoredTime", "")
     ).strip()
     remarks = str(payload.get("remarks") if payload.get("remarks") is not None else existing.get("remarks", "")).strip()
-
+    cause_of_interruption = normalize_interruption_cause(
+        payload.get("cause_of_interruption")
+        if payload.get("cause_of_interruption") is not None
+        else existing.get("causeOfInterruption", "unknown")
+    )
+        
     if status == "restored" and not action_taken:
         action_taken = "Restored"
     if action_taken and status != "restored":
