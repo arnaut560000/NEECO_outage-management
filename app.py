@@ -84,6 +84,20 @@ FEEDER_SUBSTATION_RULES = [
     ({"F61", "F62"}, {"ALG", "ALIAGA"}, "Aliaga"),
     ({"F31", "F32", "F33"}, {"QZN", "QUEZON"}, "Quezon"),
 ]
+INTERRUPTION_CAUSES = [
+    "human being",
+    "lightning",
+    "major storm disaster",
+    "scheduled",
+    "trees",
+    "overload",
+    "error",
+    "supply",
+    "equipment",
+    "other",
+    "unknown",
+    "earthquake",
+]
 
 
 def _get_table_columns(connection, table_name):
