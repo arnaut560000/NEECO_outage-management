@@ -213,6 +213,7 @@ def init_interruptions_db(db_path):
                 action_taken TEXT NOT NULL DEFAULT '',
                 restored_date TEXT NOT NULL DEFAULT '',
                 restored_time TEXT NOT NULL DEFAULT '',
+                cause_of_interruption TEXT NOT NULL DEFAULT 'unknown',
                 remarks TEXT NOT NULL DEFAULT '',
                 created_by TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
