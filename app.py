@@ -521,6 +521,7 @@ def normalize_monitoring_fields(payload, existing=None):
         "actionTaken": action_taken,
         "restoredDate": restored_date,
         "restoredTime": restored_time,
+        "causeOfInterruption": cause_of_interruption,
         "remarks": remarks,
     }
 
