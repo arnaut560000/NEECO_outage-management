@@ -603,6 +603,10 @@ def infer_affected_area(record):
         if len(sorted_areas) > 1:
             return f"{primary_area} +{len(sorted_areas) - 1} area(s)"
         return primary_area
+    if str(record.get("contextType") or "") == "mobile_field_report":
+        mobile_area = _clean_area_text(record.get("name"))
+        if mobile_area and not mobile_area.lower().startswith("mobile field report"):
+            return mobile_area
     target_name = str(record.get("targetName") or record.get("sourceTowerClicked") or "").strip()
     return re.sub(r"^(Tower|Transformer|Line Cut|Search Result):\s*", "", target_name, flags=re.IGNORECASE) or "-"
 
@@ -2658,6 +2662,7 @@ CSRF_PROTECTED_ENDPOINTS = {
     "login": "login",
     "logout": "index",
     "create_interruption": "index",
+    "api_mobile_create_interruption": "mobile_app",
     "delete_interruption": "index",
     "update_interruption_monitoring": "index",
     "admin_users_create": "admin_users",
@@ -2845,6 +2850,64 @@ def _mobile_payload(filters=None):
     }
 
 
+def _mobile_workspace_pol_options(user_id, limit=1500):
+    metadata = get_user_workspace_metadata(user_id)
+    workspace = get_user_workspace(user_id, include_payload=True)
+    options_by_key = {}
+
+    def add_option(raw_value, *, source="", area=""):
+        text = str(raw_value or "").strip()
+        if not text:
+            return
+        normalized = _normalize_lookup_id(text) or text.upper()
+        if normalized in options_by_key:
+            existing = options_by_key[normalized]
+            if area and not existing.get("area"):
+                existing["area"] = area
+            return
+        options_by_key[normalized] = {
+            "value": text,
+            "label": text,
+            "source": source,
+            "area": area,
+        }
+
+    network = workspace.get("network") if isinstance(workspace, dict) else None
+    if isinstance(network, dict):
+        for tower in network.get("towers") or []:
+            if not isinstance(tower, dict):
+                continue
+            for key in ("name", "code", "pol_id", "id"):
+                add_option(tower.get(key), source="feeder")
+                if len(options_by_key) >= limit:
+                    break
+            if len(options_by_key) >= limit:
+                break
+
+    _account_payload, indexes = _get_account_query_indexes(user_id)
+    if indexes:
+        for record in indexes.get("records", []):
+            if not isinstance(record, dict):
+                continue
+            area = _extract_barangay_from_address(record.get("address"))
+            for key in ("pol_id", "frombus_id", "tobus_id"):
+                add_option(record.get(key), source="account", area=area)
+                if len(options_by_key) >= limit:
+                    break
+            if len(options_by_key) >= limit:
+                break
+
+    options = sorted(options_by_key.values(), key=lambda item: item["value"].upper())
+    return {
+        "feederFileName": metadata.get("feederFileName") or "",
+        "updatedAt": metadata.get("updatedAt") or "",
+        "networkTowerCount": int(((metadata.get("network") or {}).get("towerCount") or 0)),
+        "accountRowCount": int(((metadata.get("accountData") or {}).get("rowCount") or 0)),
+        "options": options,
+        "limited": len(options_by_key) >= limit,
+    }
+
+
 @app.route("/mobile")
 @login_required
 def mobile_app():
@@ -2858,6 +2921,96 @@ def api_mobile_interruptions():
         "success": True,
         "mobile": _mobile_payload(filters=_dashboard_request_filters()),
     })
+
+
+@app.route("/api/mobile/workspace-pol-ids", methods=["GET"])
+@login_required
+def api_mobile_workspace_pol_ids():
+    user_id = g.current_user["id"] if g.current_user else None
+    return jsonify({
+        "success": True,
+        "workspace": _mobile_workspace_pol_options(user_id),
+    })
+
+
+@app.route("/api/mobile/interruptions", methods=["POST"])
+@role_required("can_edit_interruption")
+def api_mobile_create_interruption():
+    payload = request.get_json(silent=True) or request.form.to_dict()
+    pol_id = str(payload.get("pol_id") or payload.get("selected_pol_id") or "").strip()
+    if not pol_id:
+        return api_error("Selected Pol ID is required.")
+
+    affected_area = str(payload.get("affected_area") or "").strip()
+    cause = normalize_interruption_cause(payload.get("cause_of_interruption"), default="unknown")
+    remarks = str(payload.get("remarks") or "").strip()
+    now = datetime.now()
+    feeder_match = re.search(r"\bF\d{1,3}\b", pol_id.upper())
+    workspace_meta = get_user_workspace_metadata(g.current_user["id"] if g.current_user else None)
+    feeder_name = workspace_meta.get("feederFileName") or (feeder_match.group(0) if feeder_match else "")
+    name = affected_area or f"Mobile Field Report - {pol_id}"
+    matched_rows = _query_account_rows_for_towers(
+        g.current_user["id"] if g.current_user else None,
+        tower_names=[pol_id],
+    )
+
+    create_payload = {
+        "name": name,
+        "start_date": now.strftime("%Y-%m-%d"),
+        "start_time": now.strftime("%H:%M"),
+        "end_date": now.strftime("%Y-%m-%d"),
+        "end_time": now.strftime("%H:%M"),
+        "context_type": "mobile_field_report",
+        "target_name": pol_id,
+        "source_tower_clicked": pol_id,
+        "clicked_tower": {
+            "name": pol_id,
+            "pol_id": pol_id,
+        },
+        "affected_towers": [
+            {
+                "name": pol_id,
+                "pol_id": pol_id,
+                "area": affected_area,
+            }
+        ],
+        "matched_rows": matched_rows,
+        "line_indexes": [],
+        "tower_indexes": [],
+        "kml_feature_ids": [],
+        "feeder_name": feeder_name,
+        "monitoring_status": "active",
+        "cause_of_interruption": cause,
+        "remarks": remarks or "Mobile field report",
+        "trace_confidence": "mobile_field_report",
+        "audit": {
+            "source": "mobile",
+            "affected_area": affected_area,
+            "trace_confidence": "mobile_field_report",
+        },
+    }
+
+    try:
+        row = create_interruption_record(create_payload, g.current_user["username"] if g.current_user else "Unknown User")
+        saved_interruption = serialize_interruption_row(row)
+        log_audit_event(
+            "save_interruption",
+            details={
+                "interruption_id": saved_interruption["id"],
+                "name": saved_interruption["name"],
+                "target_name": saved_interruption["targetName"],
+                "context_type": saved_interruption["contextType"],
+                "source": "mobile",
+            },
+        )
+        return jsonify({
+            "success": True,
+            "message": "Mobile field report saved.",
+            "interruption": saved_interruption,
+            "mobile": _mobile_payload(),
+        })
+    except Exception as exc:
+        return api_error(str(exc))
 
 
 @app.route("/dashboard/export-monitoring", methods=["GET"])

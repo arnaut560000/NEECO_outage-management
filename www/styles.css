@@ -3,7 +3,9 @@
 }
 
 body {
-  background: #101815;
+  background:
+    radial-gradient(circle at top left, rgba(47, 138, 87, 0.24), transparent 28rem),
+    linear-gradient(180deg, #07110e 0%, #101815 48%, #0a1210 100%);
   color: #eef7f0;
   font-family: Arial, Helvetica, sans-serif;
   margin: 0;
@@ -12,28 +14,49 @@ body {
 
 .app-shell {
   display: grid;
-  gap: 16px;
+  gap: 14px;
   margin: 0 auto;
   max-width: 720px;
-  padding: 18px;
+  padding: max(18px, env(safe-area-inset-top)) 16px 18px;
 }
 
 .brand-panel,
 .server-card,
-.tips {
-  background: #17221d;
-  border: 1px solid #2f4037;
-  border-radius: 10px;
-  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.22);
+.tips,
+.quick-grid article {
+  background: rgba(19, 31, 26, 0.92);
+  border: 1px solid rgba(124, 157, 137, 0.18);
+  border-radius: 14px;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.24);
 }
 
 .brand-panel {
-  background: linear-gradient(135deg, #0d1713 0%, #1c3127 100%);
+  align-items: center;
+  background:
+    linear-gradient(135deg, rgba(13, 23, 19, 0.98), rgba(28, 58, 44, 0.94)),
+    linear-gradient(90deg, rgba(219, 181, 76, 0.18), transparent);
+  display: flex;
+  gap: 14px;
+  min-height: 170px;
   padding: 20px;
 }
 
+.brand-mark {
+  align-items: center;
+  background: #f2c94c;
+  border-radius: 14px;
+  color: #111812;
+  display: flex;
+  flex: 0 0 auto;
+  font-size: 28px;
+  font-weight: 900;
+  height: 58px;
+  justify-content: center;
+  width: 58px;
+}
+
 .brand-panel span {
-  color: #d5ae45;
+  color: #e6c35f;
   display: block;
   font-size: 12px;
   font-weight: 900;
@@ -41,13 +64,13 @@ body {
 }
 
 .brand-panel h1 {
-  font-size: 28px;
+  font-size: 29px;
   line-height: 1.1;
   margin: 8px 0 0;
 }
 
 .brand-panel p,
-.tips li,
+.tips p,
 #statusText {
   color: #a9baad;
   font-size: 14px;
@@ -56,8 +79,37 @@ body {
 
 .server-card {
   display: grid;
-  gap: 10px;
+  gap: 12px;
   padding: 16px;
+}
+
+.card-title {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.card-title span {
+  color: #f2f8f3;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.card-title strong {
+  background: #20342b;
+  border: 1px solid #3b5648;
+  border-radius: 999px;
+  color: #dff5e6;
+  font-size: 11px;
+  padding: 7px 9px;
+  white-space: nowrap;
+}
+
+.card-title strong.error {
+  background: #3a201d;
+  border-color: #7a3c36;
+  color: #ffaaa2;
 }
 
 label {
@@ -68,31 +120,38 @@ label {
 }
 
 input {
-  background: #101a15;
-  border: 1px solid #34463b;
-  border-radius: 8px;
+  background: #0b1612;
+  border: 1px solid #31483d;
+  border-radius: 10px;
   color: #edf7ef;
   font: inherit;
-  min-height: 46px;
+  min-height: 48px;
   padding: 10px 12px;
   width: 100%;
 }
 
+.button-row {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
 button {
-  background: #2f8a57;
+  background: #36a268;
   border: 0;
-  border-radius: 8px;
+  border-radius: 10px;
   color: #f8fff9;
   cursor: pointer;
   font: inherit;
   font-weight: 900;
-  min-height: 46px;
+  min-height: 48px;
   padding: 10px 12px;
 }
 
 button.secondary {
-  background: #caa642;
-  color: #101815;
+  background: #22372e;
+  border: 1px solid #405b4d;
+  color: #dff5e6;
 }
 
 #statusText {
@@ -113,11 +172,45 @@ button.secondary {
   margin: 0 0 10px;
 }
 
-.tips ul {
-  display: grid;
-  gap: 8px;
+.tips p {
   margin: 0;
-  padding-left: 20px;
+}
+
+.quick-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.quick-grid article {
+  display: grid;
+  gap: 5px;
+  min-height: 82px;
+  padding: 12px;
+}
+
+.quick-grid span {
+  color: #9fb3a7;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.quick-grid strong {
+  color: #f3fbf4;
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+@media (max-width: 520px) {
+  .brand-panel {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .quick-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 420px) {
@@ -127,5 +220,9 @@ button.secondary {
 
   .brand-panel h1 {
     font-size: 24px;
+  }
+
+  .button-row {
+    grid-template-columns: 1fr;
   }
 }

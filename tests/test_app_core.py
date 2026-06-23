@@ -353,6 +353,59 @@ class OutageAppTestCase(unittest.TestCase):
         self.assertEqual(dashboard["counters"]["scheduled"], 0)
         self.assertEqual(dashboard["rows"][0]["status"], "active")
 
+    def test_mobile_field_report_creates_monitoring_record(self):
+        user = self._create_user("mobile-operator", role="operator")
+        csrf_token = self._login_via_session(user["id"])
+        self.app_module.upsert_user_workspace(
+            user["id"],
+            feederFileName="F12 SAMPLE.gpx",
+            network={
+                "towers": [{"name": "F12-001"}],
+                "lines": [],
+                "validation": {"status": "ok", "summary": {}},
+            },
+            accountData={
+                "headers": ["Pol ID", "Account Number", "Address", "KWHR"],
+                "row_count": 1,
+                "records": [{
+                    "pol_id": "F12-001",
+                    "account_number": "12-3456-7890",
+                    "address": "Purok 1, Barangay San Francisco, Talavera",
+                    "kwhr": 24,
+                }],
+                "timings": {},
+            },
+        )
+
+        workspace_response = self.client.get("/api/mobile/workspace-pol-ids")
+        self.assertEqual(workspace_response.status_code, 200)
+        workspace_payload = workspace_response.get_json()
+        self.assertTrue(workspace_payload["success"])
+        self.assertEqual(workspace_payload["workspace"]["feederFileName"], "F12 SAMPLE.gpx")
+        self.assertEqual(workspace_payload["workspace"]["options"][0]["value"], "F12-001")
+
+        response = self.client.post(
+            "/api/mobile/interruptions",
+            json={
+                "pol_id": "F12-001",
+                "affected_area": "San Francisco",
+                "cause_of_interruption": "trees",
+                "remarks": "Reported by field team.",
+            },
+            headers={"X-CSRF-Token": csrf_token},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["interruption"]["sourceTowerClicked"], "F12-001")
+        self.assertEqual(payload["interruption"]["causeOfInterruption"], "trees")
+        self.assertEqual(payload["interruption"]["totalAffectedAccounts"], 1)
+        self.assertEqual(payload["mobile"]["counters"]["active"], 1)
+        self.assertEqual(payload["mobile"]["records"][0]["selectedPolId"], "F12-001")
+        self.assertEqual(payload["mobile"]["records"][0]["affectedArea"], "San Francisco")
+        self.assertEqual(payload["mobile"]["records"][0]["customersAffected"], 1)
+
     def test_dashboard_data_endpoint_filters_records(self):
         user = self._create_user("dashboard-filter-admin", role="admin")
         csrf_token = self._login_via_session(user["id"])

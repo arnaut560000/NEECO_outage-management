@@ -2,6 +2,7 @@ const serverForm = document.getElementById("serverForm");
 const serverUrlInput = document.getElementById("serverUrl");
 const clearServerBtn = document.getElementById("clearServerBtn");
 const statusText = document.getElementById("statusText");
+const connectionBadge = document.getElementById("connectionBadge");
 const storageKey = "neecoMonitoringServerUrl";
 
 function normalizeServerUrl(value) {
@@ -16,6 +17,10 @@ function normalizeServerUrl(value) {
 function setStatus(message, tone = "") {
   statusText.textContent = message;
   statusText.className = tone;
+  if (connectionBadge) {
+    connectionBadge.textContent = tone === "error" ? "Check address" : (message ? "Ready" : "Not connected");
+    connectionBadge.className = tone === "error" ? "error" : "";
+  }
 }
 
 function openMobileApp(serverUrl) {
@@ -33,6 +38,7 @@ function openMobileApp(serverUrl) {
 const savedServerUrl = localStorage.getItem(storageKey) || "";
 if (savedServerUrl) {
   serverUrlInput.value = savedServerUrl;
+  setStatus("Saved server address ready.");
 }
 
 serverForm.addEventListener("submit", (event) => {

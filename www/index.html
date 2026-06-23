@@ -10,26 +10,46 @@
 <body>
   <main class="app-shell">
     <section class="brand-panel">
-      <span>NEECO II - Area 1</span>
-      <h1>Interruption Monitoring and Informations</h1>
-      <p>Connect this app to the outage management server running on your laptop or office PC.</p>
+      <div class="brand-mark">N</div>
+      <div>
+        <span>NEECO II - Area 1</span>
+        <h1>Interruption Monitoring and Informations</h1>
+        <p>Field access for live monitoring, Pol ID lookup, and mobile interruption reports.</p>
+      </div>
     </section>
 
     <form id="serverForm" class="server-card">
+      <div class="card-title">
+        <span>Server connection</span>
+        <strong id="connectionBadge">Not connected</strong>
+      </div>
       <label for="serverUrl">Server Address</label>
-      <input id="serverUrl" name="serverUrl" type="url" placeholder="http://192.168.1.13:8080" autocomplete="url" required>
-      <button type="submit">Open Mobile App</button>
-      <button id="clearServerBtn" type="button" class="secondary">Clear Saved Address</button>
+      <input id="serverUrl" name="serverUrl" type="url" placeholder="192.168.1.13:8080 or https://example.trycloudflare.com" autocomplete="url" required>
+      <div class="button-row">
+        <button type="submit">Connect</button>
+        <button id="clearServerBtn" type="button" class="secondary">Clear</button>
+      </div>
       <p id="statusText"></p>
     </form>
 
+    <section class="quick-grid" aria-label="Quick actions">
+      <article>
+        <span>LAN</span>
+        <strong>Same Wi-Fi</strong>
+      </article>
+      <article>
+        <span>Online Test</span>
+        <strong>Cloudflare URL</strong>
+      </article>
+      <article>
+        <span>Mode</span>
+        <strong>Mobile Field App</strong>
+      </article>
+    </section>
+
     <section class="tips">
-      <h2>Before Opening</h2>
-      <ul>
-        <li>Run <strong>run_lan.ps1</strong> on the server laptop.</li>
-        <li>Connect this phone to the same Wi-Fi.</li>
-        <li>Use the IP printed by PowerShell.</li>
-      </ul>
+      <h2>Connection Checklist</h2>
+      <p>Keep the server laptop running. For LAN, use the IP printed by PowerShell. For temporary online testing, use the tunnel HTTPS address.</p>
     </section>
   </main>
 

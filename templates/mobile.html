@@ -10,8 +10,8 @@
 </head>
 <body class="mobile-app-page">
     <header class="mobile-app-header">
-        <div>
-            <span>NEECO II - Area 1</span>
+        <div class="mobile-header-copy">
+            <span>NEECO II - Area 1 Field App</span>
             <h1>Interruption Monitoring and Informations</h1>
             <p id="mobileUpdatedAt">Updated {{ mobile.updatedAt }}</p>
         </div>
@@ -22,6 +22,17 @@
     </header>
 
     <main class="mobile-app-main">
+        <section class="mobile-hero-panel" aria-label="Mobile operations">
+            <div>
+                <span class="mobile-eyebrow">Live operations</span>
+                <h2>Search a Pol ID, check active cases, and prepare field reports.</h2>
+            </div>
+            <div class="mobile-hero-actions">
+                <button id="mobileOpenCreateBtn" type="button">Add Interruption</button>
+                <a href="{{ url_for('index') }}">Open Map</a>
+            </div>
+        </section>
+
         <section class="mobile-metrics" aria-label="Interruption status">
             <article>
                 <span>Total</span>
@@ -38,6 +49,29 @@
             <article>
                 <span>Restored</span>
                 <strong data-mobile-counter="restored">{{ mobile.counters.restored }}</strong>
+            </article>
+        </section>
+
+        <section class="mobile-action-grid" aria-label="Field tools">
+            <article class="mobile-pol-card">
+                <div class="mobile-panel-title">
+                    <span class="mobile-eyebrow">Pol ID lookup</span>
+                    <h2>Find a pole or affected area</h2>
+                </div>
+                <form id="mobilePolSearchForm">
+                    <label>
+                        <span>Uploaded feeder Pol ID</span>
+                        <select id="mobileWorkspacePoleSelect">
+                            <option value="">Loading uploaded feeder...</option>
+                        </select>
+                    </label>
+                    <input id="mobilePolSearchInput" type="search" placeholder="Enter Pol ID, feeder, or area">
+                    <button type="submit">Search</button>
+                </form>
+                <div id="mobilePolSearchResult" class="mobile-pol-result">
+                    <span>Ready</span>
+                    <strong>Select from uploaded feeder or search manually.</strong>
+                </div>
             </article>
         </section>
 
@@ -69,10 +103,53 @@
         </section>
     </main>
 
+    <div id="mobileCreateModal" class="mobile-modal hidden" role="dialog" aria-modal="true" aria-labelledby="mobileCreateTitle">
+        <div class="mobile-modal-backdrop" data-close-mobile-modal></div>
+        <section class="mobile-modal-sheet" tabindex="-1">
+            <div class="mobile-modal-handle" aria-hidden="true"></div>
+            <div class="mobile-modal-head">
+                <div>
+                    <span class="mobile-eyebrow">Add interruption</span>
+                    <h2 id="mobileCreateTitle">Field interruption details</h2>
+                </div>
+                <button id="mobileCloseCreateBtn" type="button" aria-label="Close add interruption form">Close</button>
+            </div>
+            <form id="mobileCreateForm">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <label>
+                    <span>Selected Pol ID</span>
+                    <input id="mobileCreatePolId" name="pol_id" type="text" placeholder="Example: F12-001" required>
+                </label>
+                <label>
+                    <span>Affected Area</span>
+                    <input name="affected_area" type="text" placeholder="Barangay / Sitio / Area">
+                </label>
+                <label>
+                    <span>Cause</span>
+                    <select name="cause_of_interruption">
+                        {% for cause in interruption_causes %}
+                        <option value="{{ cause }}">{{ cause|title }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label>
+                    <span>Remarks</span>
+                    <textarea name="remarks" rows="3" placeholder="Short field note"></textarea>
+                </label>
+                <div class="mobile-modal-actions">
+                    <button id="mobileCancelCreateBtn" type="button">Cancel</button>
+                    <button type="submit">Save Interruption</button>
+                </div>
+            </form>
+            <p id="mobileCreateHint">Saved reports appear in monitoring immediately.</p>
+        </section>
+    </div>
+
     <div id="mobileToast" class="mobile-toast hidden" role="status" aria-live="polite"></div>
 
     <script>
         window.mobileInitialData = {{ mobile|tojson }};
+        window.mobileCsrfToken = {{ csrf_token|tojson }};
     </script>
     <script src="/static/mobile.js"></script>
 </body>

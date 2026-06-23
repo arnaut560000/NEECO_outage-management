@@ -1,12 +1,24 @@
 const mobileRecordList = document.getElementById("mobileRecordList");
 const mobileFilterForm = document.getElementById("mobileFilterForm");
 const mobileRefreshBtn = document.getElementById("mobileRefreshBtn");
+const mobilePolSearchForm = document.getElementById("mobilePolSearchForm");
+const mobilePolSearchInput = document.getElementById("mobilePolSearchInput");
+const mobileWorkspacePoleSelect = document.getElementById("mobileWorkspacePoleSelect");
+const mobilePolSearchResult = document.getElementById("mobilePolSearchResult");
+const mobileOpenCreateBtn = document.getElementById("mobileOpenCreateBtn");
+const mobileCreateModal = document.getElementById("mobileCreateModal");
+const mobileCloseCreateBtn = document.getElementById("mobileCloseCreateBtn");
+const mobileCancelCreateBtn = document.getElementById("mobileCancelCreateBtn");
+const mobileCreateForm = document.getElementById("mobileCreateForm");
+const mobileCreatePolId = document.getElementById("mobileCreatePolId");
+const mobileCreateHint = document.getElementById("mobileCreateHint");
 const mobileUpdatedAt = document.getElementById("mobileUpdatedAt");
 const mobileTotalCustomers = document.getElementById("mobileTotalCustomers");
 const mobileKwhrLoss = document.getElementById("mobileKwhrLoss");
 const mobileRevenueLoss = document.getElementById("mobileRevenueLoss");
 const mobileToast = document.getElementById("mobileToast");
 let mobileData = window.mobileInitialData || { counters: {}, analytics: {}, records: [] };
+let mobileWorkspacePolOptions = [];
 
 function escapeHtml(value) {
     return String(value ?? "")
@@ -49,6 +61,51 @@ function showMobileToast(message, tone = "success") {
     }, 2800);
 }
 
+function getSelectedWorkspaceOption(polId) {
+    const selectedPolId = String(polId || "").trim();
+    if (!selectedPolId) return null;
+    return mobileWorkspacePolOptions.find((option) => (
+        String(option.value || "").toLowerCase() === selectedPolId.toLowerCase()
+    )) || null;
+}
+
+function applyPolToCreateForm(polId, options = {}) {
+    const selectedPolId = String(polId || "").trim();
+    if (!selectedPolId) return;
+    if (mobileCreatePolId) {
+        mobileCreatePolId.value = selectedPolId;
+    }
+    if (mobilePolSearchInput) {
+        mobilePolSearchInput.value = selectedPolId;
+    }
+    const selectedOption = getSelectedWorkspaceOption(selectedPolId);
+    const areaInput = mobileCreateForm?.querySelector("[name='affected_area']");
+    if (areaInput && selectedOption?.area && (options.replaceArea || !areaInput.value)) {
+        areaInput.value = selectedOption.area;
+    }
+}
+
+function openMobileCreateModal(polId = "") {
+    if (polId) {
+        applyPolToCreateForm(polId);
+    }
+    if (!mobileCreateModal) return;
+    mobileCreateModal.classList.remove("hidden");
+    document.body.classList.add("mobile-modal-open");
+    window.setTimeout(() => {
+        const focusTarget = mobileCreatePolId && !mobileCreatePolId.value
+            ? mobileCreatePolId
+            : mobileCreateForm?.querySelector("[name='affected_area']") || mobileCreateForm?.querySelector("select, input, textarea, button");
+        focusTarget?.focus();
+    }, 30);
+}
+
+function closeMobileCreateModal() {
+    if (!mobileCreateModal) return;
+    mobileCreateModal.classList.add("hidden");
+    document.body.classList.remove("mobile-modal-open");
+}
+
 function mobileFilterParams() {
     const params = new URLSearchParams();
     if (!mobileFilterForm) return params;
@@ -77,6 +134,97 @@ function renderMobileImpact(analytics = {}) {
 function recordMeta(record) {
     const restored = [record.restoredDate, record.restoredTime].filter(Boolean).join(" ");
     return restored ? `Restored ${restored}` : `Started ${record.startTime || "-"}`;
+}
+
+function updatePolSearchResult(term, records = []) {
+    if (!mobilePolSearchResult) return;
+    const cleanTerm = String(term || "").trim();
+    const selectedWorkspacePol = mobileWorkspacePolOptions.find((option) => (
+        String(option.value || "").toLowerCase() === cleanTerm.toLowerCase()
+    ));
+    const match = records.find((record) => {
+        const haystack = [
+            record.selectedPolId,
+            record.feeder,
+            record.substation,
+            record.affectedArea,
+            record.name,
+        ].join(" ").toLowerCase();
+        return cleanTerm && haystack.includes(cleanTerm.toLowerCase());
+    });
+
+    if (!cleanTerm) {
+        mobilePolSearchResult.innerHTML = `
+            <span>Ready</span>
+            <strong>Select from uploaded feeder or search manually.</strong>
+        `;
+        return;
+    }
+
+    if (selectedWorkspacePol) {
+        mobilePolSearchResult.innerHTML = `
+            <span>Uploaded feeder match</span>
+            <strong>${escapeHtml(selectedWorkspacePol.value)}</strong>
+            <small>${escapeHtml(selectedWorkspacePol.area || selectedWorkspacePol.source || "Ready for field report")}</small>
+        `;
+        return;
+    }
+
+    if (!match) {
+        mobilePolSearchResult.innerHTML = `
+            <span>No saved monitoring match</span>
+            <strong>${escapeHtml(cleanTerm)}</strong>
+            <small>You can still save a new field report for this Pol ID.</small>
+        `;
+        return;
+    }
+
+    mobilePolSearchResult.innerHTML = `
+        <span>${escapeHtml(match.statusLabel || match.status || "Record")}</span>
+        <strong>${escapeHtml(match.selectedPolId || match.affectedArea || cleanTerm)}</strong>
+        <small>${escapeHtml(match.affectedArea || match.name || "-")}</small>
+    `;
+}
+
+function renderWorkspacePolOptions(workspace = {}) {
+    if (!mobileWorkspacePoleSelect) return;
+    mobileWorkspacePolOptions = Array.isArray(workspace.options) ? workspace.options : [];
+    const feederName = workspace.feederFileName || "Uploaded feeder";
+
+    if (!mobileWorkspacePolOptions.length) {
+        mobileWorkspacePoleSelect.innerHTML = `
+            <option value="">No uploaded feeder Pol IDs found</option>
+        `;
+        updatePolSearchResult(mobilePolSearchInput?.value || "", mobileData.records || []);
+        return;
+    }
+
+    const optionsHtml = mobileWorkspacePolOptions.map((option) => {
+        const area = option.area ? ` - ${option.area}` : "";
+        return `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label || option.value)}${escapeHtml(area)}</option>`;
+    }).join("");
+
+    mobileWorkspacePoleSelect.innerHTML = `
+        <option value="">${escapeHtml(feederName)} (${mobileWorkspacePolOptions.length} Pol IDs)</option>
+        ${optionsHtml}
+    `;
+}
+
+async function loadWorkspacePolOptions() {
+    if (!mobileWorkspacePoleSelect) return;
+    try {
+        const response = await fetch("/api/mobile/workspace-pol-ids");
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.message || "Could not load uploaded feeder.");
+        }
+        renderWorkspacePolOptions(data.workspace || {});
+    } catch (error) {
+        mobileWorkspacePoleSelect.innerHTML = `
+            <option value="">Uploaded feeder unavailable</option>
+        `;
+        showMobileToast(error.message || "Could not load uploaded feeder.", "error");
+    }
 }
 
 function renderMobileRecords(records = []) {
@@ -111,7 +259,10 @@ function renderMobileRecords(records = []) {
             <p>${escapeHtml(record.remarks || "-")}</p>
             <div class="mobile-record-foot">
                 <span>${escapeHtml(recordMeta(record))}</span>
-                <a href="${escapeHtml(record.operationsUrl || "/operations")}">Open Map</a>
+                <div>
+                    <button type="button" data-copy-pol="${escapeHtml(record.selectedPolId || "")}">Add Interruption</button>
+                    <a href="${escapeHtml(record.operationsUrl || "/operations")}">Open Map</a>
+                </div>
             </div>
         </article>
     `).join("");
@@ -154,6 +305,52 @@ async function refreshMobileRecords(options = {}) {
     }
 }
 
+async function createMobileInterruption() {
+    if (!mobileCreateForm) return;
+    const submitButton = mobileCreateForm.querySelector("button[type='submit']");
+    if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = "Saving...";
+    }
+    if (mobileCreateHint) {
+        mobileCreateHint.textContent = "Saving field report...";
+    }
+
+    try {
+        const formData = new FormData(mobileCreateForm);
+        const payload = Object.fromEntries(formData.entries());
+        const response = await fetch("/api/mobile/interruptions", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-CSRF-Token": window.mobileCsrfToken || payload.csrf_token || "",
+            },
+            body: JSON.stringify(payload),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.message || "Could not save field report.");
+        }
+        mobileCreateForm.reset();
+        closeMobileCreateModal();
+        renderMobileApp(data.mobile);
+        showMobileToast("Field report saved.");
+        if (mobileCreateHint) {
+            mobileCreateHint.textContent = "Saved reports appear in monitoring immediately.";
+        }
+    } catch (error) {
+        showMobileToast(error.message || "Save failed.", "error");
+        if (mobileCreateHint) {
+            mobileCreateHint.textContent = error.message || "Save failed.";
+        }
+    } finally {
+        if (submitButton) {
+            submitButton.disabled = false;
+            submitButton.textContent = "Save Interruption";
+        }
+    }
+}
+
 mobileFilterForm?.addEventListener("submit", (event) => {
     event.preventDefault();
     void refreshMobileRecords({ toast: "Records refreshed." });
@@ -163,7 +360,61 @@ mobileFilterForm?.addEventListener("change", () => {
     void refreshMobileRecords();
 });
 
+mobilePolSearchForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const term = String(mobilePolSearchInput?.value || "").trim();
+    if (mobileFilterForm) {
+        const searchInput = mobileFilterForm.querySelector("input[name='search']");
+        if (searchInput) searchInput.value = term;
+    }
+    if (mobileCreatePolId && term) {
+        applyPolToCreateForm(term);
+    }
+    updatePolSearchResult(term, mobileData.records || []);
+    void refreshMobileRecords({ toast: term ? "Search applied." : "Search cleared." });
+});
+
+mobileWorkspacePoleSelect?.addEventListener("change", () => {
+    const selectedPolId = String(mobileWorkspacePoleSelect.value || "").trim();
+    applyPolToCreateForm(selectedPolId, { replaceArea: true });
+    updatePolSearchResult(selectedPolId, mobileData.records || []);
+});
+
+mobileRecordList?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-copy-pol]");
+    if (!button || !mobileCreatePolId) return;
+    const polId = String(button.getAttribute("data-copy-pol") || "").trim();
+    if (!polId || polId === "-") return;
+    applyPolToCreateForm(polId);
+    openMobileCreateModal(polId);
+});
+
+mobileCreateForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void createMobileInterruption();
+});
+
+mobileOpenCreateBtn?.addEventListener("click", () => {
+    const selectedPolId = String(mobileCreatePolId?.value || mobilePolSearchInput?.value || mobileWorkspacePoleSelect?.value || "").trim();
+    openMobileCreateModal(selectedPolId);
+});
+
+mobileCloseCreateBtn?.addEventListener("click", closeMobileCreateModal);
+mobileCancelCreateBtn?.addEventListener("click", closeMobileCreateModal);
+mobileCreateModal?.addEventListener("click", (event) => {
+    if (event.target.closest("[data-close-mobile-modal]")) {
+        closeMobileCreateModal();
+    }
+});
+
+window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && mobileCreateModal && !mobileCreateModal.classList.contains("hidden")) {
+        closeMobileCreateModal();
+    }
+});
+
 renderMobileApp(mobileData);
+void loadWorkspacePolOptions();
 window.setInterval(() => {
     void refreshMobileRecords();
 }, 60000);
