@@ -1492,6 +1492,7 @@ function getInitialInterruptionRequest() {
     return {
         interruptionId,
         openViewer: params.get("open_viewer") === "1",
+        focusPolId: String(params.get("focus_pol_id") || "").trim(),
     };
 }
 
@@ -1506,6 +1507,9 @@ async function handleInitialInterruptionRequest() {
     initialInterruptionRequestHandled = true;
     try {
         await applyInterruption(requestState.interruptionId);
+        if (requestState.focusPolId) {
+            focusSelectedPolIdOnMap(requestState.focusPolId);
+        }
         if (requestState.openViewer) {
             openModal(viewerModal);
             renderViewer();
@@ -2817,6 +2821,57 @@ function zoomToSelectedTower() {
     if (center) {
         map.setView(center, 24);
     }
+}
+
+function getTowerLookupValues(tower) {
+    return [
+        tower?.name,
+        tower?.code,
+        tower?.pol_id,
+        tower?.pole_id,
+        tower?.id,
+    ].filter(Boolean);
+}
+
+function findTowerIndexForPolId(polId) {
+    const normalizedTarget = normalizeId(polId);
+    if (!normalizedTarget || !networkData?.towers?.length) return -1;
+    return networkData.towers.findIndex((tower) => (
+        getTowerLookupValues(tower).some((value) => normalizeId(value) === normalizedTarget)
+    ));
+}
+
+function focusSelectedPolIdOnMap(polId) {
+    const label = String(polId || "").trim();
+    if (!label) return false;
+    if (mapSearchInput) {
+        mapSearchInput.value = label;
+    }
+
+    const towerIndex = findTowerIndexForPolId(label);
+    if (towerIndex >= 0) {
+        const tower = networkData.towers[towerIndex];
+        const highlightedIndexes = new Set(currentPanelData?.towerIndexes || []);
+        highlightedIndexes.add(towerIndex);
+        applyTowerHighlightState([...highlightedIndexes]);
+        if (Number.isFinite(Number(tower.lat)) && Number.isFinite(Number(tower.lon))) {
+            map.setView([tower.lat, tower.lon], 24);
+        }
+        return true;
+    }
+
+    const clickedTower = currentPanelData?.clickedTower;
+    if (
+        clickedTower
+        && Number.isFinite(Number(clickedTower.lat))
+        && Number.isFinite(Number(clickedTower.lon))
+        && getTowerLookupValues(clickedTower).some((value) => normalizeId(value) === normalizeId(label))
+    ) {
+        map.setView([clickedTower.lat, clickedTower.lon], 24);
+        return true;
+    }
+
+    return false;
 }
 
 function buildChildrenMap(lines) {

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101815">
+  <title>NEECO Monitoring</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <section class="brand-panel">
+      <span>NEECO II - Area 1</span>
+      <h1>Interruption Monitoring and Informations</h1>
+      <p>Connect this app to the outage management server running on your laptop or office PC.</p>
+    </section>
+
+    <form id="serverForm" class="server-card">
+      <label for="serverUrl">Server Address</label>
+      <input id="serverUrl" name="serverUrl" type="url" placeholder="http://192.168.1.13:8080" autocomplete="url" required>
+      <button type="submit">Open Mobile App</button>
+      <button id="clearServerBtn" type="button" class="secondary">Clear Saved Address</button>
+      <p id="statusText"></p>
+    </form>
+
+    <section class="tips">
+      <h2>Before Opening</h2>
+      <ul>
+        <li>Run <strong>run_lan.ps1</strong> on the server laptop.</li>
+        <li>Connect this phone to the same Wi-Fi.</li>
+        <li>Use the IP printed by PowerShell.</li>
+      </ul>
+    </section>
+  </main>
+
+  <script src="./main.js"></script>
+</body>
+</html>

@@ -27,6 +27,12 @@ workspace_cache/
 *.tmp
 *.zip
 
+# Node/Android wrapper
+node_modules/
+.npm-cache/
+android/app/build/
+android/build/
+
 # OS/editor noise
 .DS_Store
 Thumbs.db

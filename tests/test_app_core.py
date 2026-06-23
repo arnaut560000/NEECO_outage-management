@@ -1,4 +1,5 @@
 import importlib
+from io import BytesIO
 import os
 import shutil
 import sys
@@ -107,11 +108,15 @@ class OutageAppTestCase(unittest.TestCase):
 
         dashboard_response = self.client.get("/")
         operations_response = self.client.get("/operations")
+        mobile_response = self.client.get("/mobile")
 
         self.assertEqual(dashboard_response.status_code, 200)
         self.assertIn(b"NEECO II - AREA 1 OUTAGE MANAGEMENT SYSTEM", dashboard_response.data)
+        self.assertIn(b"Mobile App", dashboard_response.data)
         self.assertEqual(operations_response.status_code, 200)
         self.assertIn(b"Upload .GPX file", operations_response.data)
+        self.assertEqual(mobile_response.status_code, 200)
+        self.assertIn(b"Interruption Monitoring and Informations", mobile_response.data)
 
     def test_supervisor_can_view_but_not_manage_audit_logs(self):
         user = self._create_user("supervisor-audit", role="supervisor")
@@ -395,6 +400,32 @@ class OutageAppTestCase(unittest.TestCase):
         self.assertEqual(payload["dashboard"]["rows"][0]["causeOfInterruption"], "unknown")
         self.assertIn("F12", payload["dashboard"]["filterOptions"]["feeders"])
         self.assertIn("Guimba", payload["dashboard"]["filterOptions"]["substations"])
+
+        mobile_response = self.client.get("/api/mobile/interruptions?status=active&search=TAL001")
+        self.assertEqual(mobile_response.status_code, 200)
+        mobile_payload = mobile_response.get_json()
+        self.assertTrue(mobile_payload["success"])
+        self.assertEqual(mobile_payload["mobile"]["counters"]["total"], 1)
+        self.assertEqual(mobile_payload["mobile"]["records"][0]["selectedPolId"], "TAL001")
+        self.assertIn("focus_pol_id=TAL001", mobile_payload["mobile"]["records"][0]["operationsUrl"])
+
+        export_response = self.client.get("/dashboard/export-monitoring?status=active&feeder=F12")
+        self.assertEqual(export_response.status_code, 200)
+        self.assertEqual(
+            export_response.headers["Content-Type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        self.assertTrue(export_response.data.startswith(b"PK"))
+        from openpyxl import load_workbook
+
+        workbook = load_workbook(BytesIO(export_response.data), read_only=True)
+        self.assertIn("Filtered Monitoring", workbook.sheetnames)
+        self.assertIn("All Monitoring", workbook.sheetnames)
+        self.assertEqual(workbook["Filtered Monitoring"].max_row, 2)
+        self.assertEqual(workbook["All Monitoring"].max_row, 3)
+
+        dashboard_page = self.client.get("/")
+        self.assertIn(b"focus_pol_id=TAL001", dashboard_page.data)
 
     def test_delete_all_interruptions_requires_admin_and_confirmation(self):
         operator = self._create_user("bulk-delete-operator", role="operator")

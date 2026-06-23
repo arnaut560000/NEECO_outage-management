@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#101815">
+    <title>NEECO Interruption Monitoring and Informations</title>
+    <link rel="manifest" href="{{ url_for('static', filename='mobile_manifest.json') }}">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="mobile-app-page">
+    <header class="mobile-app-header">
+        <div>
+            <span>NEECO II - Area 1</span>
+            <h1>Interruption Monitoring and Informations</h1>
+            <p id="mobileUpdatedAt">Updated {{ mobile.updatedAt }}</p>
+        </div>
+        <form method="post" action="{{ url_for('logout') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit">Logout</button>
+        </form>
+    </header>
+
+    <main class="mobile-app-main">
+        <section class="mobile-metrics" aria-label="Interruption status">
+            <article>
+                <span>Total</span>
+                <strong data-mobile-counter="total">{{ mobile.counters.total }}</strong>
+            </article>
+            <article>
+                <span>Active</span>
+                <strong data-mobile-counter="active">{{ mobile.counters.active }}</strong>
+            </article>
+            <article>
+                <span>Scheduled</span>
+                <strong data-mobile-counter="scheduled">{{ mobile.counters.scheduled }}</strong>
+            </article>
+            <article>
+                <span>Restored</span>
+                <strong data-mobile-counter="restored">{{ mobile.counters.restored }}</strong>
+            </article>
+        </section>
+
+        <section class="mobile-filter-panel" aria-label="Mobile filters">
+            <form id="mobileFilterForm">
+                <select id="mobileStatusFilter" name="status" aria-label="Status filter">
+                    <option value="">All status</option>
+                    <option value="active">Active</option>
+                    <option value="scheduled">Scheduled</option>
+                    <option value="restored">Restored</option>
+                </select>
+                <input id="mobileSearchFilter" name="search" type="search" placeholder="Search area, feeder, Pol ID">
+                <button id="mobileRefreshBtn" type="submit">Refresh</button>
+            </form>
+        </section>
+
+        <section class="mobile-impact" aria-label="Outage impact">
+            <p><span>Customers</span><strong id="mobileTotalCustomers">{{ mobile.analytics.totalCustomers }}</strong></p>
+            <p><span>KWHR Loss</span><strong id="mobileKwhrLoss">{{ mobile.analytics.totalKwhrLoss }}</strong></p>
+            <p><span>Revenue Loss</span><strong id="mobileRevenueLoss">PHP {{ mobile.analytics.totalRevenueLoss }}</strong></p>
+        </section>
+
+        <section>
+            <div class="mobile-section-title">
+                <h2>Interruption Records</h2>
+                <a href="{{ url_for('index') }}">Dashboard</a>
+            </div>
+            <div id="mobileRecordList" class="mobile-record-list"></div>
+        </section>
+    </main>
+
+    <div id="mobileToast" class="mobile-toast hidden" role="status" aria-live="polite"></div>
+
+    <script>
+        window.mobileInitialData = {{ mobile|tojson }};
+    </script>
+    <script src="/static/mobile.js"></script>
+</body>
+</html>

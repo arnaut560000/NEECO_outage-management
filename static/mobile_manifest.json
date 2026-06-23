@@ -1,0 +1,9 @@
+{
+  "name": "NEECO Interruption Monitoring and Informations",
+  "short_name": "NEECO Monitoring",
+  "start_url": "/mobile",
+  "display": "standalone",
+  "background_color": "#101815",
+  "theme_color": "#101815",
+  "description": "Mobile interruption monitoring view for NEECO outage records."
+}

@@ -22,6 +22,7 @@ const substationChart = document.getElementById("substationChart");
 const dashboardFilterForm = document.getElementById("dashboardFilterForm");
 const dashboardClearFiltersBtn = document.getElementById("dashboardClearFiltersBtn");
 const dashboardRefreshBtn = document.getElementById("dashboardRefreshBtn");
+const dashboardExportBtn = document.getElementById("dashboardExportBtn");
 const dashboardRefreshMeta = document.getElementById("dashboardRefreshMeta");
 const dashboardToast = document.getElementById("dashboardToast");
 const openDeleteAllInterruptionsBtn = document.getElementById("openDeleteAllInterruptionsBtn");
@@ -77,6 +78,18 @@ function formatCause(value) {
         .join(" ");
 }
 
+function operationsLinkForRow(row) {
+    const params = new URLSearchParams({
+        interruption_id: String(row.id || ""),
+        open_viewer: "1",
+    });
+    const selectedPolId = String(row.selectedPolId || "").trim();
+    if (selectedPolId && selectedPolId !== "-") {
+        params.set("focus_pol_id", selectedPolId);
+    }
+    return `/operations?${params.toString()}`;
+}
+
 function renderDashboardRows(rows = []) {
     if (!dashboardTableBody) return;
     if (!rows.length) {
@@ -96,7 +109,7 @@ function renderDashboardRows(rows = []) {
                 ${row.feederName && row.feederName !== row.feeder ? `<span>${escapeHtml(row.feederName)}</span>` : ""}
             </td>
             <td>${escapeHtml(row.selectedPolId || "-")}</td>
-            <td><a class="dashboard-link-btn" href="/operations?interruption_id=${encodeURIComponent(row.id)}&open_viewer=1">${escapeHtml(row.affectedArea)}</a></td>
+            <td><a class="dashboard-link-btn" href="${escapeHtml(operationsLinkForRow(row))}">${escapeHtml(row.affectedArea)}</a></td>
             <td>${escapeHtml(row.startTime)}</td>
             <td>${escapeHtml(row.restoredDate || "-")}</td>
             <td>${escapeHtml(row.restoredTime || "-")}</td>
@@ -487,6 +500,12 @@ dashboardFilterForm?.addEventListener("change", () => {
 dashboardClearFiltersBtn?.addEventListener("click", () => {
     dashboardFilterForm?.reset();
     void refreshDashboard({ toast: "Dashboard filters cleared." });
+});
+
+dashboardExportBtn?.addEventListener("click", () => {
+    const params = dashboardFilterParams();
+    const url = params.toString() ? `/dashboard/export-monitoring?${params.toString()}` : "/dashboard/export-monitoring";
+    window.location.href = url;
 });
 
 openDeleteAllInterruptionsBtn?.addEventListener("click", () => {

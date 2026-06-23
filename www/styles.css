@@ -1,0 +1,131 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background: #101815;
+  color: #eef7f0;
+  font-family: Arial, Helvetica, sans-serif;
+  margin: 0;
+  min-height: 100vh;
+}
+
+.app-shell {
+  display: grid;
+  gap: 16px;
+  margin: 0 auto;
+  max-width: 720px;
+  padding: 18px;
+}
+
+.brand-panel,
+.server-card,
+.tips {
+  background: #17221d;
+  border: 1px solid #2f4037;
+  border-radius: 10px;
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.22);
+}
+
+.brand-panel {
+  background: linear-gradient(135deg, #0d1713 0%, #1c3127 100%);
+  padding: 20px;
+}
+
+.brand-panel span {
+  color: #d5ae45;
+  display: block;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.brand-panel h1 {
+  font-size: 28px;
+  line-height: 1.1;
+  margin: 8px 0 0;
+}
+
+.brand-panel p,
+.tips li,
+#statusText {
+  color: #a9baad;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.server-card {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+}
+
+label {
+  color: #a9baad;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+input {
+  background: #101a15;
+  border: 1px solid #34463b;
+  border-radius: 8px;
+  color: #edf7ef;
+  font: inherit;
+  min-height: 46px;
+  padding: 10px 12px;
+  width: 100%;
+}
+
+button {
+  background: #2f8a57;
+  border: 0;
+  border-radius: 8px;
+  color: #f8fff9;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+  min-height: 46px;
+  padding: 10px 12px;
+}
+
+button.secondary {
+  background: #caa642;
+  color: #101815;
+}
+
+#statusText {
+  margin: 2px 0 0;
+  min-height: 20px;
+}
+
+#statusText.error {
+  color: #ffaaa2;
+}
+
+.tips {
+  padding: 16px;
+}
+
+.tips h2 {
+  font-size: 18px;
+  margin: 0 0 10px;
+}
+
+.tips ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 20px;
+}
+
+@media (max-width: 420px) {
+  .app-shell {
+    padding: 12px;
+  }
+
+  .brand-panel h1 {
+    font-size: 24px;
+  }
+}

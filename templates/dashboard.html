@@ -17,6 +17,7 @@
             </div>
             <div class="dashboard-actions">
                 <a href="{{ url_for('operations') }}" class="primary-action dashboard-map-link">Open Tracing Map</a>
+                <a href="{{ url_for('mobile_app') }}" class="secondary-action auth-action-btn admin-nav-link">Mobile App</a>
                 {% if current_permissions.can_view_records %}
                 <a href="{{ url_for('records_history') }}" class="secondary-action auth-action-btn admin-nav-link">Records / History</a>
                 {% endif %}
@@ -172,7 +173,12 @@
                     <h2>Interruption Monitoring</h2>
                     <p>Substation and feeder are inferred from the uploaded GPX feeder filename when available.</p>
                 </div>
-                <a href="{{ url_for('operations') }}" class="secondary-action dashboard-secondary-link">Add / Trace Interruption</a>
+                <div class="dashboard-section-actions">
+                    {% if current_permissions.can_export %}
+                    <button id="dashboardExportBtn" type="button" class="secondary-action dashboard-secondary-link">Export Monitoring</button>
+                    {% endif %}
+                    <a href="{{ url_for('operations') }}" class="secondary-action dashboard-secondary-link">Add / Trace Interruption</a>
+                </div>
             </div>
 
             <div class="dashboard-table-wrap">
@@ -208,7 +214,7 @@
                                     {% endif %}
                                 </td>
                                 <td>{{ row.selectedPolId }}</td>
-                                <td><a class="dashboard-link-btn" href="{{ url_for('operations') }}?interruption_id={{ row.id }}&open_viewer=1">{{ row.affectedArea }}</a></td>
+                                <td><a class="dashboard-link-btn" href="{{ url_for('operations') }}?interruption_id={{ row.id }}&open_viewer=1{% if row.selectedPolId and row.selectedPolId != '-' %}&focus_pol_id={{ row.selectedPolId|urlencode }}{% endif %}">{{ row.affectedArea }}</a></td>
                                 <td>{{ row.startTime }}</td>
                                 <td>{{ row.restoredDate or "-" }}</td>
                                 <td>{{ row.restoredTime or "-" }}</td>

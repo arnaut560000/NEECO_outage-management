@@ -7,7 +7,7 @@ import time
 import calendar
 from contextlib import contextmanager
 from datetime import datetime
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlencode, urljoin, urlparse
 
 import click
 from flask import Flask, flash, g, jsonify, redirect, render_template, request, send_file, session, url_for
@@ -49,6 +49,7 @@ from auth import (
 )
 from export_disconnected_fragments import build_disconnected_fragments_workbook
 from export_interruption import build_interruption_workbook
+from export_monitoring import build_monitoring_workbook
 from new_interruption import create_interruption_payload
 from parser import (
     ValidationError,
@@ -1008,6 +1009,7 @@ AUDIT_DETAIL_ALLOWED_KEYS = {
     "kml_upload_success": {"request_path", "method", "ip", "filename", "size_bytes", "feature_count", "validation_status"},
     "kml_upload_failure": {"request_path", "method", "ip", "filename", "size_bytes", "message"},
     "export_interruption": {"request_path", "method", "ip", "name", "target_name", "feeder_name", "trace_confidence"},
+    "export_monitoring": {"request_path", "method", "ip", "row_count", "status", "substation", "feeder", "created_by", "date_from", "date_to", "search"},
     "export_disconnected_fragments": {"request_path", "method", "ip", "fragment_count", "feeder_name"},
     "save_interruption": {"request_path", "method", "ip", "interruption_id", "name", "target_name", "context_type", "feeder_name"},
     "delete_interruption": {"request_path", "method", "ip", "interruption_id", "name"},
@@ -2082,6 +2084,7 @@ def get_available_audit_actions():
         "kml_upload_failure",
         "kml_upload",
         "export_interruption",
+        "export_monitoring",
         "export_disconnected_fragments",
         "create_user",
         "update_role",
@@ -2776,10 +2779,8 @@ def index():
     return render_template("dashboard.html", dashboard=build_dashboard_model(), interruption_causes=INTERRUPTION_CAUSES)
 
 
-@app.route("/dashboard/data", methods=["GET"])
-@login_required
-def dashboard_data():
-    filters = {
+def _dashboard_request_filters():
+    return {
         "status": request.args.get("status", ""),
         "substation": request.args.get("substation", ""),
         "feeder": request.args.get("feeder", ""),
@@ -2788,10 +2789,98 @@ def dashboard_data():
         "date_to": request.args.get("date_to", ""),
         "search": request.args.get("search", ""),
     }
+
+
+@app.route("/dashboard/data", methods=["GET"])
+@login_required
+def dashboard_data():
+    filters = _dashboard_request_filters()
     return jsonify({
         "success": True,
         "dashboard": build_dashboard_model(filters=filters),
     })
+
+
+def _mobile_record(row):
+    selected_pol_id = str(row.get("selectedPolId") or "").strip()
+    operations_query = {
+        "interruption_id": row.get("id", ""),
+        "open_viewer": "1",
+    }
+    if selected_pol_id and selected_pol_id != "-":
+        operations_query["focus_pol_id"] = selected_pol_id
+    return {
+        "id": row.get("id", ""),
+        "name": row.get("name", ""),
+        "status": row.get("status", "active"),
+        "statusLabel": str(row.get("status", "active")).title(),
+        "substation": row.get("substation", "-"),
+        "feeder": row.get("feeder", "-"),
+        "selectedPolId": selected_pol_id or "-",
+        "affectedArea": row.get("affectedArea", "-"),
+        "startTime": row.get("startTime", "-"),
+        "restoredDate": row.get("restoredDate", ""),
+        "restoredTime": row.get("restoredTime", ""),
+        "actionTaken": row.get("actionTaken", ""),
+        "durationMinutes": row.get("durationMinutes", ""),
+        "customersAffected": row.get("customersAffected", 0),
+        "causeOfInterruption": row.get("causeOfInterruption", "unknown"),
+        "remarks": row.get("remarks", ""),
+        "estimatedKwhrLoss": row.get("estimatedKwhrLoss", ""),
+        "estimatedRevenueLoss": row.get("estimatedRevenueLoss", ""),
+        "createdBy": row.get("createdBy", ""),
+        "createdAt": row.get("createdAt", ""),
+        "operationsUrl": f"{url_for('operations')}?{urlencode(operations_query)}",
+    }
+
+
+def _mobile_payload(filters=None):
+    dashboard = build_dashboard_model(filters=filters or {})
+    return {
+        "counters": dashboard.get("counters", {}),
+        "analytics": dashboard.get("analytics", {}),
+        "filters": dashboard.get("filters", {}),
+        "updatedAt": dashboard.get("updatedAt", ""),
+        "records": [_mobile_record(row) for row in dashboard.get("rows") or []],
+    }
+
+
+@app.route("/mobile")
+@login_required
+def mobile_app():
+    return render_template("mobile.html", mobile=_mobile_payload(), interruption_causes=INTERRUPTION_CAUSES)
+
+
+@app.route("/api/mobile/interruptions", methods=["GET"])
+@login_required
+def api_mobile_interruptions():
+    return jsonify({
+        "success": True,
+        "mobile": _mobile_payload(filters=_dashboard_request_filters()),
+    })
+
+
+@app.route("/dashboard/export-monitoring", methods=["GET"])
+@role_required("can_export")
+def export_monitoring():
+    filters = _dashboard_request_filters()
+    dashboard = build_dashboard_model(filters=filters)
+    all_dashboard = build_dashboard_model()
+    workbook_stream = build_monitoring_workbook(dashboard, all_dashboard)
+    log_audit_event(
+        "export_monitoring",
+        details={
+            **filters,
+            "row_count": len(dashboard.get("rows") or []),
+        },
+    )
+    filename = f"interruption_monitoring_{datetime.now().strftime('%Y-%m-%d_%H-%M')}.xlsx"
+    return send_file(
+        workbook_stream,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 @app.route("/operations")

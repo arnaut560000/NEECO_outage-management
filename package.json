@@ -1,0 +1,30 @@
+{
+  "name": "outage_management",
+  "version": "1.0.0",
+  "description": "Flask-based outage tracing, interruption management, workspace restore, validation, audit logging, and XLSX export for feeder outage operations.",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "android:add": "cap add android",
+    "android:open": "cap open android",
+    "android:sync": "cap sync android"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arnaut560000/outage_management.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "UNLICENSED",
+  "bugs": {
+    "url": "https://github.com/arnaut560000/outage_management/issues"
+  },
+  "homepage": "https://github.com/arnaut560000/outage_management#readme",
+  "dependencies": {
+    "@capacitor/android": "^8.4.0",
+    "@capacitor/cli": "^8.4.0",
+    "@capacitor/core": "^8.4.0"
+  }
+}
