@@ -70,6 +70,11 @@ const mapSearchBtn = document.getElementById("mapSearchBtn");
 const toggleGpxBtn = document.getElementById("toggleGpxBtn");
 const toggleKmlBtn = document.getElementById("toggleKmlBtn");
 const toggleInferredBtn = document.getElementById("toggleInferredBtn");
+const uploadedFeederSelect = document.getElementById("uploadedFeederSelect");
+const restoreUploadedFeederBtn = document.getElementById("restoreUploadedFeederBtn");
+const deleteUploadedFeederBtn = document.getElementById("deleteUploadedFeederBtn");
+const deleteUploadedFeederModal = document.getElementById("deleteUploadedFeederModal");
+const deleteUploadedFeederList = document.getElementById("deleteUploadedFeederList");
 const zoomFeederBtn = document.getElementById("zoomFeederBtn");
 const zoomSelectedBtn = document.getElementById("zoomSelectedBtn");
 const clearAllBtn = document.getElementById("clearAllBtn");
@@ -154,6 +159,7 @@ let lastAppliedKmlVisibilitySignature = "";
 let workspaceRestoreToken = 0;
 let accountMatchRequestCache = new Map();
 let accountSearchRequestCache = new Map();
+let uploadedFeeders = [];
 const ACCOUNT_MATCH_REQUEST_CACHE_LIMIT = 18;
 const ACCOUNT_SEARCH_REQUEST_CACHE_LIMIT = 24;
 
@@ -654,6 +660,7 @@ uploadForm.addEventListener("submit", async function (e) {
             ? `<div class="upload-warning"><strong>Warning:</strong> ${escapeHtml(warnings.join(" | "))}</div>`
             : "";
         statusBox.innerHTML = `<strong>Success:</strong> ${escapeHtml(data.message)}${warningHtml}${getPerformanceModeHintHtml()}`;
+        await loadUploadedFeeders({ selectFeederId: data.uploadedFeeder?.id });
         setUploadButtonState(feederUploadButton, "success");
         hideSidePanel();
     } catch (err) {
@@ -876,6 +883,21 @@ clearAllBtn.addEventListener("click", async function () {
 
 clearWorkspaceBtn.addEventListener("click", async function () {
     await handleWorkspaceClearRequest();
+});
+
+restoreUploadedFeederBtn?.addEventListener("click", async function () {
+    await restoreSelectedUploadedFeeder();
+});
+
+deleteUploadedFeederBtn?.addEventListener("click", async function () {
+    openModal(deleteUploadedFeederModal);
+    await loadAdminUploadedFeedersForDelete();
+});
+
+deleteUploadedFeederList?.addEventListener("click", async function (event) {
+    const button = event.target.closest("[data-delete-uploaded-feeder]");
+    if (!button) return;
+    await deleteUploadedFeederById(button.getAttribute("data-delete-uploaded-feeder"));
 });
 
 async function handleWorkspaceClearRequest() {
@@ -1188,6 +1210,197 @@ function upsertInterruption(interruption) {
     return normalized;
 }
 
+function renderUploadedFeeders() {
+    if (!uploadedFeederSelect) return;
+    if (!uploadedFeeders.length) {
+        uploadedFeederSelect.innerHTML = `<option value="">No feeder mappings</option>`;
+        if (restoreUploadedFeederBtn) restoreUploadedFeederBtn.disabled = true;
+        return;
+    }
+    uploadedFeederSelect.innerHTML = `
+        <option value="">Choose feeder mapping</option>
+        ${uploadedFeeders.map((feeder) => `
+            <option value="${escapeHtml(feeder.id)}">${escapeHtml(feeder.displayName || feeder.feederCode)} - ${escapeHtml(feeder.filename || "")}</option>
+        `).join("")}
+    `;
+    if (restoreUploadedFeederBtn) restoreUploadedFeederBtn.disabled = false;
+}
+
+function renderDeleteUploadedFeederList(feeders = uploadedFeeders) {
+    if (!deleteUploadedFeederList) return;
+    if (!feeders.length) {
+        deleteUploadedFeederList.className = "uploaded-feeder-delete-list empty-state";
+        deleteUploadedFeederList.textContent = "No uploaded feeders to delete.";
+        return;
+    }
+    deleteUploadedFeederList.className = "uploaded-feeder-delete-list";
+    deleteUploadedFeederList.innerHTML = feeders.map((feeder) => `
+        <article class="uploaded-feeder-delete-item">
+            <div>
+                <strong>${escapeHtml(feeder.displayName || feeder.feederCode || "Uploaded feeder")}</strong>
+                <span>${escapeHtml(feeder.filename || "")} / ${escapeHtml(feeder.username || getCurrentUsername())}</span>
+                <small>${escapeHtml(feeder.towerCount || 0)} Pol IDs / ${escapeHtml(feeder.lineCount || 0)} lines</small>
+            </div>
+            <button type="button" class="danger-btn" data-delete-uploaded-feeder="${escapeHtml(feeder.id)}">Delete</button>
+        </article>
+    `).join("");
+}
+
+async function loadUploadedFeeders(options = {}) {
+    try {
+        const response = await fetchWithTimeout("/uploaded-feeders", { method: "GET" });
+        const data = await readApiJson(response, "Failed to load uploaded feeders.");
+        if (!data.success) {
+            throw new Error(data.message || "Failed to load uploaded feeders.");
+        }
+        uploadedFeeders = data.feeders || [];
+        renderUploadedFeeders();
+        if (options.selectFeederId && uploadedFeederSelect) {
+            uploadedFeederSelect.value = String(options.selectFeederId);
+        }
+    } catch (error) {
+        uploadedFeeders = [];
+        if (uploadedFeederSelect) {
+            uploadedFeederSelect.innerHTML = `<option value="">Feeders unavailable</option>`;
+        }
+        if (restoreUploadedFeederBtn) restoreUploadedFeederBtn.disabled = true;
+    }
+}
+
+async function restoreSelectedUploadedFeeder(feederIdValue = "", options = {}) {
+    const feederId = String(feederIdValue || uploadedFeederSelect?.value || "").trim();
+    if (!feederId) {
+        alert("Choose a feeder mapping first.");
+        return;
+    }
+    if (restoreUploadedFeederBtn) {
+        restoreUploadedFeederBtn.disabled = true;
+        restoreUploadedFeederBtn.textContent = "Restoring...";
+    }
+    const restoreToken = ++workspaceRestoreToken;
+    showMapLoading("Restoring feeder mapping...");
+    try {
+        const response = await fetchWithTimeout(`/uploaded-feeders/${encodeURIComponent(feederId)}/restore`, {
+            method: "POST",
+            headers: { "X-CSRF-Token": csrfToken },
+        });
+        const data = await readApiJson(response, "Failed to restore feeder mapping.");
+        if (!data.success || !data.workspace) {
+            throw new Error(data.message || "Failed to restore feeder mapping.");
+        }
+        await applyWorkspacePayload(data.workspace, { restoreToken, keepRecoveryNotice: Boolean(options.keepRecoveryNotice) });
+        statusBox.innerHTML = `<strong>Workspace:</strong> Restored feeder mapping.${getPerformanceModeHintHtml()}`;
+    } catch (error) {
+        alert(error.message || "Could not restore feeder mapping.");
+    } finally {
+        hideMapLoading();
+        if (restoreUploadedFeederBtn) {
+            restoreUploadedFeederBtn.disabled = false;
+            restoreUploadedFeederBtn.textContent = "Restore Feeder Mapping";
+        }
+    }
+}
+
+async function showRecoveryFeederPicker() {
+    const existingPicker = workspaceRecoveryNotice?.querySelector("[data-recovery-feeder-picker]");
+    if (existingPicker) {
+        existingPicker.remove();
+        return;
+    }
+    await loadUploadedFeeders();
+    const picker = document.createElement("div");
+    picker.className = "workspace-recovery-picker";
+    picker.setAttribute("data-recovery-feeder-picker", "1");
+    if (!uploadedFeeders.length) {
+        picker.innerHTML = `<span>No uploaded feeder mappings found.</span>`;
+        workspaceRecoveryNotice?.appendChild(picker);
+        return;
+    }
+    picker.innerHTML = `
+        <select aria-label="Choose feeder mapping">
+            <option value="">Choose feeder mapping</option>
+            ${uploadedFeeders.map((feeder) => `
+                <option value="${escapeHtml(feeder.id)}">${escapeHtml(feeder.displayName || feeder.feederCode)} - ${escapeHtml(feeder.filename || "")}</option>
+            `).join("")}
+        </select>
+        <button type="button" class="secondary-action compact-btn">Restore Selected</button>
+    `;
+    const select = picker.querySelector("select");
+    const button = picker.querySelector("button");
+    button?.addEventListener("click", async () => {
+        const feederId = String(select?.value || "").trim();
+        if (!feederId) {
+            alert("Choose a feeder mapping first.");
+            return;
+        }
+        await restoreSelectedUploadedFeeder(feederId, { keepRecoveryNotice: true });
+    });
+    workspaceRecoveryNotice?.appendChild(picker);
+}
+
+async function restoreWorkspaceComponent(component, label) {
+    const restoreToken = ++workspaceRestoreToken;
+    showMapLoading(`Restoring ${label}...`);
+    try {
+        const response = await fetchWithTimeout(`/workspace/current?component=${encodeURIComponent(component)}`, { method: "GET" });
+        const data = await readApiJson(response, `Failed to restore ${label}.`);
+        if (restoreToken !== workspaceRestoreToken) {
+            return;
+        }
+        if (!data.success || !data.workspace) {
+            throw new Error(data.message || `Failed to restore ${label}.`);
+        }
+        await applyWorkspacePayload(data.workspace, { restoreToken, merge: true, keepRecoveryNotice: true });
+        if (component === "network") {
+            statusBox.innerHTML = `<strong>Workspace:</strong> Restored feeder mapping.${getPerformanceModeHintHtml()}`;
+        } else if (component === "account") {
+            xlsxStatusBox.innerHTML = `<strong>Workspace:</strong> Restored XLSX account mapping.${getPerformanceModeHintHtml()}`;
+        }
+    } catch (error) {
+        if (restoreToken === workspaceRestoreToken) {
+            alert(error.message || `Could not restore ${label}.`);
+        }
+    } finally {
+        hideMapLoading();
+    }
+}
+
+async function loadAdminUploadedFeedersForDelete() {
+    if (!deleteUploadedFeederList) return;
+    deleteUploadedFeederList.className = "uploaded-feeder-delete-list empty-state";
+    deleteUploadedFeederList.textContent = "Loading uploaded feeders...";
+    try {
+        const response = await fetchWithTimeout("/uploaded-feeders?all=1", { method: "GET" });
+        const data = await readApiJson(response, "Failed to load uploaded feeders.");
+        if (!data.success) {
+            throw new Error(data.message || "Failed to load uploaded feeders.");
+        }
+        renderDeleteUploadedFeederList(data.feeders || []);
+    } catch (error) {
+        deleteUploadedFeederList.textContent = error.message || "Failed to load uploaded feeders.";
+    }
+}
+
+async function deleteUploadedFeederById(feederId) {
+    if (!feederId) return;
+    const confirmed = confirm("Delete this uploaded feeder mapping? This will not delete saved interruption records.");
+    if (!confirmed) return;
+    try {
+        const response = await fetchWithTimeout(`/uploaded-feeders/${encodeURIComponent(feederId)}`, {
+            method: "DELETE",
+            headers: { "X-CSRF-Token": csrfToken },
+        });
+        const data = await readApiJson(response, "Failed to delete uploaded feeder.");
+        if (!data.success) {
+            throw new Error(data.message || "Failed to delete uploaded feeder.");
+        }
+        await loadUploadedFeeders();
+        renderDeleteUploadedFeederList(data.feeders || []);
+    } catch (error) {
+        alert(error.message || "Could not delete uploaded feeder.");
+    }
+}
+
 async function loadInterruptionsFromServer(options = {}) {
     const preserveActive = options.preserveActive !== false;
     const previousActiveId = preserveActive ? activeInterruptionId : null;
@@ -1223,6 +1436,7 @@ async function loadInterruptionsFromServer(options = {}) {
 }
 
 async function initializePageState() {
+    await loadUploadedFeeders();
     await restoreWorkspaceFromServer();
     await loadInterruptionsFromServer();
 }
@@ -1271,20 +1485,25 @@ function applyWorkspaceStatusBoxes() {
 
 function showWorkspaceRecoveryNotice(message, options = {}) {
     if (!workspaceRecoveryNotice) return;
-    const actionHtml = options.buttonLabel
-        ? `<button type="button" class="secondary-action compact-btn" id="restoreWorkspaceDataBtn">${escapeHtml(options.buttonLabel)}</button>`
+    const actions = Array.isArray(options.actions)
+        ? options.actions
+        : (options.buttonLabel ? [{ label: options.buttonLabel, onClick: options.onClick }] : []);
+    const actionHtml = actions.length
+        ? `<div class="workspace-recovery-actions">${actions.map((action, index) => `
+            <button type="button" class="secondary-action compact-btn ${action.danger ? "danger-btn" : ""}" data-workspace-recovery-action="${index}">${escapeHtml(action.label)}</button>
+        `).join("")}</div>`
         : "";
     workspaceRecoveryNotice.innerHTML = `
         <span>${escapeHtml(message)}</span>
         ${actionHtml}
     `;
     workspaceRecoveryNotice.classList.remove("hidden-msg");
-    if (options.buttonLabel && typeof options.onClick === "function") {
-        const restoreButton = document.getElementById("restoreWorkspaceDataBtn");
-        if (restoreButton) {
-            restoreButton.addEventListener("click", options.onClick, { once: true });
+    actions.forEach((action, index) => {
+        const button = workspaceRecoveryNotice.querySelector(`[data-workspace-recovery-action="${index}"]`);
+        if (button && typeof action.onClick === "function") {
+            button.addEventListener("click", action.onClick);
         }
-    }
+    });
 }
 
 function hideWorkspaceRecoveryNotice() {
@@ -1353,20 +1572,37 @@ function resetWorkspaceClientState(options = {}) {
 
 async function applyWorkspacePayload(workspace, options = {}) {
     const restoreToken = options.restoreToken ?? workspaceRestoreToken;
-    resetWorkspaceClientState({ preserveRecoveryNotice: true, bumpRestoreToken: false });
+    const mergeWorkspace = Boolean(options.merge);
+    if (!mergeWorkspace) {
+        resetWorkspaceClientState({ preserveRecoveryNotice: true, bumpRestoreToken: false });
+    }
     if (restoreToken !== workspaceRestoreToken) {
         return false;
     }
-    feederFileName = String(workspace?.feederFileName || "").trim();
-    networkData = workspace?.network || null;
-    accountData = rebuildRestoredAccountData(workspace?.accountData || null);
-    kmlOverlayData = workspace?.kmlOverlay || null;
+    if (!mergeWorkspace || workspace?.feederFileName) {
+        feederFileName = String(workspace?.feederFileName || feederFileName || "").trim();
+    }
+    if (!mergeWorkspace || workspace?.network) {
+        networkData = workspace?.network || null;
+    }
+    if (!mergeWorkspace || workspace?.accountData) {
+        accountData = rebuildRestoredAccountData(workspace?.accountData || null);
+    }
+    if (!mergeWorkspace || workspace?.kmlOverlay) {
+        kmlOverlayData = workspace?.kmlOverlay || null;
+    }
     accountLookupIndex = (accountData && !accountData.serverBacked) ? buildAccountLookupIndex(accountData) : null;
     accountSearchRowsIndex = (accountData && !accountData.serverBacked) ? buildAccountSearchRowsIndex(accountData) : null;
     clearAccountRequestCaches();
-    validationReports.feeder = workspace?.validationReports?.feeder ? normalizeValidation(workspace.validationReports.feeder) : null;
-    validationReports.xlsx = workspace?.validationReports?.xlsx ? normalizeValidation(workspace.validationReports.xlsx) : null;
-    validationReports.kml = workspace?.validationReports?.kml ? normalizeValidation(workspace.validationReports.kml) : null;
+    if (!mergeWorkspace || workspace?.validationReports?.feeder) {
+        validationReports.feeder = workspace?.validationReports?.feeder ? normalizeValidation(workspace.validationReports.feeder) : null;
+    }
+    if (!mergeWorkspace || workspace?.validationReports?.xlsx) {
+        validationReports.xlsx = workspace?.validationReports?.xlsx ? normalizeValidation(workspace.validationReports.xlsx) : null;
+    }
+    if (!mergeWorkspace || workspace?.validationReports?.kml) {
+        validationReports.kml = workspace?.validationReports?.kml ? normalizeValidation(workspace.validationReports.kml) : null;
+    }
     validationReports.audit = null;
     rebuildDataIndexes();
     setPerformanceMode();
@@ -1391,7 +1627,9 @@ async function applyWorkspacePayload(workspace, options = {}) {
         }
     }
 
-    if (Array.isArray(workspace?.recoveryWarnings) && workspace.recoveryWarnings.length) {
+    if (options.keepRecoveryNotice) {
+        // Keep the large-workspace action strip visible after partial restores.
+    } else if (Array.isArray(workspace?.recoveryWarnings) && workspace.recoveryWarnings.length) {
         showWorkspaceRecoveryNotice(workspace.recoveryWarnings.join(" "));
     } else {
         hideWorkspaceRecoveryNotice();
@@ -1430,29 +1668,32 @@ async function restoreWorkspaceFromServer() {
             showWorkspaceRecoveryNotice(
                 `${prefix}Saved workspace is large (${formatSummaryNumber((metadata.totalBytes || 0) / (1024 * 1024), 2)} MB). Load it only when needed to avoid browser lag.`,
                 {
-                    buttonLabel: "Restore Workspace Data",
-                    onClick: async function () {
-                        const manualRestoreToken = ++workspaceRestoreToken;
-                        updateMapLoadingProgress("Restoring saved workspace...");
-                        try {
-                            const fullResponse = await fetchWithTimeout("/workspace/current?full=1", { method: "GET" });
-                            const fullData = await readApiJson(fullResponse, "Failed to restore workspace data.");
-                            if (manualRestoreToken !== workspaceRestoreToken) {
-                                return;
-                            }
-                            if (!fullData.success || !fullData.workspace) {
-                                throw new Error(fullData.message || "Failed to restore workspace data.");
-                            }
-                            await applyWorkspacePayload(fullData.workspace, { restoreToken: manualRestoreToken });
-                        } catch (error) {
-                            if (manualRestoreToken !== workspaceRestoreToken) {
-                                return;
-                            }
-                            showWorkspaceRecoveryNotice("Saved workspace could not be restored automatically. You can continue and rebuild from uploads or from a saved interruption.");
-                        } finally {
-                            hideMapLoading();
-                        }
-                    },
+                    actions: [
+                        {
+                            label: "Restore Mapping",
+                            onClick: async function () {
+                                await showRecoveryFeederPicker();
+                            },
+                        },
+                        {
+                            label: "Restore XLSX",
+                            onClick: async function () {
+                                await restoreWorkspaceComponent("account", "XLSX account mapping");
+                            },
+                        },
+                        {
+                            label: "Delete Uploaded Feeder",
+                            danger: true,
+                            onClick: async function () {
+                                if (deleteUploadedFeederModal) {
+                                    openModal(deleteUploadedFeederModal);
+                                    await loadAdminUploadedFeedersForDelete();
+                                } else {
+                                    alert("Only administrators can delete uploaded feeders.");
+                                }
+                            },
+                        },
+                    ],
                 }
             );
             return;

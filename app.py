@@ -149,6 +149,7 @@ def initialize_app(flask_app):
     backfill_interruption_summary_columns(flask_app.config["AUTH_DB_PATH"])
     init_audit_logs_db(flask_app.config["AUTH_DB_PATH"])
     init_user_workspace_db(flask_app.config["AUTH_DB_PATH"])
+    init_uploaded_feeders_db(flask_app.config["AUTH_DB_PATH"])
     prune_audit_logs(force=True)
     if flask_app.config["AUTO_SEED_ADMIN"]:
         SEED_ADMIN_INFO = ensure_seed_admin(
@@ -292,6 +293,31 @@ def init_user_workspace_db(db_path):
         )
 
 
+def init_uploaded_feeders_db(db_path):
+    with managed_db(db_path, busy_timeout_ms=app.config.get("SQLITE_BUSY_TIMEOUT_MS", 10000)) as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS uploaded_feeders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                feeder_code TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                cache_name TEXT NOT NULL,
+                validation_json TEXT NOT NULL DEFAULT '{}',
+                tower_count INTEGER NOT NULL DEFAULT 0,
+                line_count INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, feeder_code)
+            )
+            """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_uploaded_feeders_user ON uploaded_feeders(user_id, updated_at DESC)"
+        )
+
+
 def backfill_interruption_summary_columns(db_path, limit=500):
     with managed_db(db_path, busy_timeout_ms=app.config.get("SQLITE_BUSY_TIMEOUT_MS", 10000)) as connection:
         rows = connection.execute(
@@ -422,6 +448,242 @@ def infer_substation_name(feeder_name):
         if feeder_code in feeder_codes:
             return substation_name
     return "Unidentified"
+
+
+def _safe_cache_token(value):
+    token = re.sub(r"[^A-Za-z0-9_-]+", "_", str(value or "").strip())
+    return token.strip("_")[:80] or "feeder"
+
+
+def _infer_uploaded_feeder_code(filename, network):
+    feeder_code = infer_feeder_code(filename)
+    if feeder_code:
+        return feeder_code
+    if isinstance(network, dict):
+        for tower in network.get("towers") or []:
+            if not isinstance(tower, dict):
+                continue
+            for key in ("name", "code", "pol_id", "id"):
+                feeder_code = infer_feeder_code(tower.get(key))
+                if feeder_code:
+                    return feeder_code
+    return _safe_cache_token(os.path.splitext(str(filename or "feeder"))[0]).upper()
+
+
+def _uploaded_feeder_display_name(feeder_code, filename):
+    code = str(feeder_code or "").upper().strip()
+    match = re.search(r"F0?(\d{1,3})", code)
+    if match:
+        return f"Feeder {int(match.group(1))}"
+    stem = os.path.splitext(str(filename or "Uploaded feeder"))[0].strip()
+    return stem or "Uploaded feeder"
+
+
+def _serialize_uploaded_feeder_row(row):
+    if not row:
+        return None
+    return {
+        "id": int(row["id"]),
+        "userId": int(row["user_id"]),
+        "username": row["username"] if "username" in row.keys() else "",
+        "feederCode": row["feeder_code"] or "",
+        "displayName": row["display_name"] or "",
+        "filename": row["filename"] or "",
+        "towerCount": int(row["tower_count"] or 0),
+        "lineCount": int(row["line_count"] or 0),
+        "createdAt": row["created_at"] or "",
+        "updatedAt": row["updated_at"] or "",
+    }
+
+
+def _get_uploaded_feeder_row(feeder_id):
+    with get_app_db_read_connection() as connection:
+        return connection.execute(
+            """
+            SELECT uf.*, u.username
+            FROM uploaded_feeders uf
+            LEFT JOIN users u ON u.id = uf.user_id
+            WHERE uf.id = ?
+            """,
+            (feeder_id,),
+        ).fetchone()
+
+
+def _load_uploaded_feeder_payload(row):
+    if not row:
+        return None
+    return _read_workspace_cache_payload(row["user_id"], row["cache_name"])
+
+
+def _user_value(user, key, default=None):
+    if not user:
+        return default
+    if isinstance(user, dict):
+        return user.get(key, default)
+    try:
+        return user[key]
+    except Exception:
+        return default
+
+
+def save_uploaded_feeder(user_id, filename, network, validation):
+    if not user_id or not isinstance(network, dict):
+        return None
+    feeder_code = _infer_uploaded_feeder_code(filename, network)
+    display_name = _uploaded_feeder_display_name(feeder_code, filename)
+    cache_name = f"uploaded_feeder_{_safe_cache_token(feeder_code)}"
+    cache_info = _write_workspace_cache_payload(user_id, cache_name, _compact_network_data(network))
+    with get_app_db_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO uploaded_feeders (
+                user_id,
+                feeder_code,
+                display_name,
+                filename,
+                cache_name,
+                validation_json,
+                tower_count,
+                line_count,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id, feeder_code) DO UPDATE SET
+                display_name = excluded.display_name,
+                filename = excluded.filename,
+                cache_name = excluded.cache_name,
+                validation_json = excluded.validation_json,
+                tower_count = excluded.tower_count,
+                line_count = excluded.line_count,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                user_id,
+                feeder_code,
+                display_name,
+                str(filename or ""),
+                cache_info["cacheName"],
+                _json_dumps(validation, {}),
+                len(network.get("towers", [])),
+                len(network.get("lines", [])),
+            ),
+        )
+        connection.commit()
+        row = connection.execute(
+            "SELECT * FROM uploaded_feeders WHERE user_id = ? AND feeder_code = ?",
+            (user_id, feeder_code),
+        ).fetchone()
+    return _serialize_uploaded_feeder_row(row)
+
+
+def list_uploaded_feeders(user_id=None, include_all=False):
+    with get_app_db_read_connection() as connection:
+        if include_all:
+            rows = connection.execute(
+                """
+                SELECT uf.*, u.username
+                FROM uploaded_feeders uf
+                LEFT JOIN users u ON u.id = uf.user_id
+                ORDER BY datetime(uf.updated_at) DESC, uf.id DESC
+                """
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT uf.*, u.username
+                FROM uploaded_feeders uf
+                LEFT JOIN users u ON u.id = uf.user_id
+                WHERE uf.user_id = ?
+                ORDER BY uf.feeder_code ASC, datetime(uf.updated_at) DESC
+                """,
+                (user_id,),
+            ).fetchall()
+    return [_serialize_uploaded_feeder_row(row) for row in rows]
+
+
+def ensure_current_workspace_feeder_saved(user_id):
+    if not user_id:
+        return None
+    metadata = get_user_workspace_metadata(user_id)
+    if not metadata.get("network") or not metadata.get("feederFileName"):
+        return None
+    existing = list_uploaded_feeders(user_id=user_id)
+    feeder_code = _infer_uploaded_feeder_code(metadata.get("feederFileName"), {})
+    if any(item.get("feederCode") == feeder_code for item in existing):
+        return None
+    workspace = get_user_workspace(user_id, include_payload=True)
+    network = workspace.get("network") if isinstance(workspace, dict) else None
+    if not network:
+        return None
+    validation = ((workspace.get("validationReports") or {}).get("feeder") if isinstance(workspace, dict) else None) or {}
+    return save_uploaded_feeder(user_id, metadata.get("feederFileName"), network, validation)
+
+
+def restore_uploaded_feeder_to_workspace(feeder_id, acting_user):
+    row = _get_uploaded_feeder_row(feeder_id)
+    if not row:
+        return None, "Uploaded feeder was not found."
+    acting_user_id = _user_value(acting_user, "id")
+    can_manage = get_role_permissions(_user_value(acting_user, "role", "")).get("can_manage_users", False)
+    if int(row["user_id"]) != int(acting_user_id or 0) and not can_manage:
+        return None, "You do not have permission to restore this feeder mapping."
+    network = _load_uploaded_feeder_payload(row)
+    if not network:
+        return None, "Uploaded feeder mapping is missing or unreadable."
+    validation = _json_loads(row["validation_json"], {})
+    upsert_user_workspace(
+        acting_user_id,
+        feederFileName=row["filename"],
+        network=network,
+        feederValidation=validation,
+    )
+    workspace = get_user_workspace(acting_user_id, include_payload=True)
+    return workspace, ""
+
+
+def delete_uploaded_feeder(feeder_id):
+    row = _get_uploaded_feeder_row(feeder_id)
+    if not row:
+        return None
+    metadata = get_user_workspace_metadata(row["user_id"])
+    if metadata.get("feederFileName") == row["filename"]:
+        _repair_user_workspace_metadata(row["user_id"], clear_network=True)
+    with get_app_db_connection() as connection:
+        connection.execute("DELETE FROM uploaded_feeders WHERE id = ?", (feeder_id,))
+        connection.commit()
+    _remove_workspace_cache_payload(row["user_id"], row["cache_name"])
+    return _serialize_uploaded_feeder_row(row)
+
+
+def search_uploaded_feeder_pol_ids(feeder_id, query, acting_user):
+    row = _get_uploaded_feeder_row(feeder_id)
+    if not row:
+        return None, "Uploaded feeder was not found."
+    acting_user_id = _user_value(acting_user, "id")
+    can_manage = get_role_permissions(_user_value(acting_user, "role", "")).get("can_manage_users", False)
+    if int(row["user_id"]) != int(acting_user_id or 0) and not can_manage:
+        return None, "You do not have permission to search this uploaded feeder."
+    network = _load_uploaded_feeder_payload(row) or {}
+    search_text = str(query or "").strip().upper()
+    results = []
+    for tower in network.get("towers") or []:
+        if not isinstance(tower, dict):
+            continue
+        name = str(tower.get("name") or tower.get("pol_id") or tower.get("code") or tower.get("id") or "").strip()
+        if not name:
+            continue
+        haystack = " ".join(str(tower.get(key) or "") for key in ("name", "code", "pol_id", "id")).upper()
+        if search_text and search_text not in haystack:
+            continue
+        results.append({
+            "polId": name,
+            "label": name,
+        })
+        if len(results) >= 25:
+            break
+    return {
+        "feeder": _serialize_uploaded_feeder_row(row),
+        "results": results,
+    }, ""
 
 
 def _parse_local_datetime(date_value, time_value):
@@ -2665,6 +2927,8 @@ CSRF_PROTECTED_ENDPOINTS = {
     "api_mobile_create_interruption": "mobile_app",
     "delete_interruption": "index",
     "update_interruption_monitoring": "index",
+    "restore_uploaded_feeder": "index",
+    "delete_uploaded_feeder_route": "index",
     "admin_users_create": "admin_users",
     "admin_users_update_role": "admin_users",
     "admin_users_reset_password": "admin_users",
@@ -2850,61 +3114,9 @@ def _mobile_payload(filters=None):
     }
 
 
-def _mobile_workspace_pol_options(user_id, limit=1500):
-    metadata = get_user_workspace_metadata(user_id)
-    workspace = get_user_workspace(user_id, include_payload=True)
-    options_by_key = {}
-
-    def add_option(raw_value, *, source="", area=""):
-        text = str(raw_value or "").strip()
-        if not text:
-            return
-        normalized = _normalize_lookup_id(text) or text.upper()
-        if normalized in options_by_key:
-            existing = options_by_key[normalized]
-            if area and not existing.get("area"):
-                existing["area"] = area
-            return
-        options_by_key[normalized] = {
-            "value": text,
-            "label": text,
-            "source": source,
-            "area": area,
-        }
-
-    network = workspace.get("network") if isinstance(workspace, dict) else None
-    if isinstance(network, dict):
-        for tower in network.get("towers") or []:
-            if not isinstance(tower, dict):
-                continue
-            for key in ("name", "code", "pol_id", "id"):
-                add_option(tower.get(key), source="feeder")
-                if len(options_by_key) >= limit:
-                    break
-            if len(options_by_key) >= limit:
-                break
-
-    _account_payload, indexes = _get_account_query_indexes(user_id)
-    if indexes:
-        for record in indexes.get("records", []):
-            if not isinstance(record, dict):
-                continue
-            area = _extract_barangay_from_address(record.get("address"))
-            for key in ("pol_id", "frombus_id", "tobus_id"):
-                add_option(record.get(key), source="account", area=area)
-                if len(options_by_key) >= limit:
-                    break
-            if len(options_by_key) >= limit:
-                break
-
-    options = sorted(options_by_key.values(), key=lambda item: item["value"].upper())
+def _mobile_workspace_feeders(user_id):
     return {
-        "feederFileName": metadata.get("feederFileName") or "",
-        "updatedAt": metadata.get("updatedAt") or "",
-        "networkTowerCount": int(((metadata.get("network") or {}).get("towerCount") or 0)),
-        "accountRowCount": int(((metadata.get("accountData") or {}).get("rowCount") or 0)),
-        "options": options,
-        "limited": len(options_by_key) >= limit,
+        "feeders": list_uploaded_feeders(user_id=user_id),
     }
 
 
@@ -2927,9 +3139,10 @@ def api_mobile_interruptions():
 @login_required
 def api_mobile_workspace_pol_ids():
     user_id = g.current_user["id"] if g.current_user else None
+    ensure_current_workspace_feeder_saved(user_id)
     return jsonify({
         "success": True,
-        "workspace": _mobile_workspace_pol_options(user_id),
+        "workspace": _mobile_workspace_feeders(user_id),
     })
 
 
@@ -2940,14 +3153,31 @@ def api_mobile_create_interruption():
     pol_id = str(payload.get("pol_id") or payload.get("selected_pol_id") or "").strip()
     if not pol_id:
         return api_error("Selected Pol ID is required.")
+    try:
+        feeder_id = int(payload.get("feeder_id") or 0)
+    except (TypeError, ValueError):
+        feeder_id = 0
+    if not feeder_id:
+        return api_error("Choose an uploaded feeder before saving the interruption.")
+    feeder_search, feeder_error = search_uploaded_feeder_pol_ids(feeder_id, pol_id, g.current_user)
+    if feeder_error:
+        return api_error(feeder_error)
+    feeder_matches = feeder_search.get("results") or []
+    exact_match = next(
+        (item for item in feeder_matches if _normalize_lookup_id(item.get("polId")) == _normalize_lookup_id(pol_id)),
+        None,
+    )
+    if not exact_match:
+        return api_error("Pol ID was not found in the selected uploaded feeder.")
+    pol_id = exact_match.get("polId") or pol_id
 
     affected_area = str(payload.get("affected_area") or "").strip()
     cause = normalize_interruption_cause(payload.get("cause_of_interruption"), default="unknown")
     remarks = str(payload.get("remarks") or "").strip()
     now = datetime.now()
     feeder_match = re.search(r"\bF\d{1,3}\b", pol_id.upper())
-    workspace_meta = get_user_workspace_metadata(g.current_user["id"] if g.current_user else None)
-    feeder_name = workspace_meta.get("feederFileName") or (feeder_match.group(0) if feeder_match else "")
+    selected_feeder = feeder_search.get("feeder") or {}
+    feeder_name = selected_feeder.get("filename") or selected_feeder.get("feederCode") or (feeder_match.group(0) if feeder_match else "")
     name = affected_area or f"Mobile Field Report - {pol_id}"
     matched_rows = _query_account_rows_for_towers(
         g.current_user["id"] if g.current_user else None,
@@ -3047,7 +3277,24 @@ def operations():
 def get_current_workspace():
     user_id = g.current_user["id"] if g.current_user else None
     include_payload = request.args.get("full", "").strip() == "1"
+    component = str(request.args.get("component") or "").strip().lower()
     metadata = get_user_workspace_metadata(user_id)
+    if component in {"network", "account"}:
+        workspace = get_user_workspace(user_id, include_payload=True)
+        partial_workspace = {
+            "feederFileName": workspace.get("feederFileName", ""),
+            "network": workspace.get("network") if component == "network" else None,
+            "accountData": workspace.get("accountData") if component == "account" else None,
+            "kmlOverlay": None,
+            "validationReports": {
+                "feeder": (workspace.get("validationReports") or {}).get("feeder") if component == "network" else None,
+                "xlsx": (workspace.get("validationReports") or {}).get("xlsx") if component == "account" else None,
+                "kml": None,
+            },
+            "updatedAt": workspace.get("updatedAt"),
+            "recoveryWarnings": list(workspace.get("recoveryWarnings", [])),
+        }
+        return api_success(workspace=partial_workspace, metadata=metadata)
     workspace = get_user_workspace(user_id, include_payload=include_payload or not metadata.get("requiresManualRestore"))
     return api_success(workspace=workspace, metadata=metadata)
 
@@ -3058,6 +3305,51 @@ def clear_current_workspace():
     clear_user_workspace(g.current_user["id"] if g.current_user else None)
     log_audit_event("clear_workspace", details={"source": "main_page"})
     return api_success("Current workspace cleared successfully.")
+
+
+@app.route("/uploaded-feeders", methods=["GET"])
+@login_required
+def uploaded_feeders():
+    include_all = bool(g.current_user and get_role_permissions(g.current_user["role"]).get("can_manage_users")) and request.args.get("all") == "1"
+    if not include_all:
+        ensure_current_workspace_feeder_saved(g.current_user["id"] if g.current_user else None)
+    feeders = list_uploaded_feeders(
+        user_id=g.current_user["id"] if g.current_user else None,
+        include_all=include_all,
+    )
+    return api_success(feeders=feeders)
+
+
+@app.route("/uploaded-feeders/<int:feeder_id>/restore", methods=["POST"])
+@login_required
+def restore_uploaded_feeder(feeder_id):
+    workspace, error_message = restore_uploaded_feeder_to_workspace(feeder_id, g.current_user)
+    if error_message:
+        return api_error(error_message, status_code=404 if "not found" in error_message.lower() else 403)
+    log_audit_event(
+        "clear_workspace",
+        details={"source": "restore_uploaded_feeder", "uploaded_feeder_id": feeder_id},
+    )
+    metadata = get_user_workspace_metadata(g.current_user["id"] if g.current_user else None)
+    return api_success("Feeder mapping restored.", workspace=workspace, metadata=metadata)
+
+
+@app.route("/uploaded-feeders/<int:feeder_id>", methods=["DELETE"])
+@role_required("can_manage_users")
+def delete_uploaded_feeder_route(feeder_id):
+    deleted = delete_uploaded_feeder(feeder_id)
+    if not deleted:
+        return api_error("Uploaded feeder was not found.", status_code=404)
+    return api_success("Uploaded feeder deleted.", feeder=deleted, feeders=list_uploaded_feeders(include_all=True))
+
+
+@app.route("/uploaded-feeders/<int:feeder_id>/search", methods=["GET"])
+@login_required
+def search_uploaded_feeder(feeder_id):
+    result, error_message = search_uploaded_feeder_pol_ids(feeder_id, request.args.get("q", ""), g.current_user)
+    if error_message:
+        return api_error(error_message, status_code=404 if "not found" in error_message.lower() else 403)
+    return api_success(**result)
 
 
 @app.route("/account_mapping/query", methods=["POST"])
@@ -3509,6 +3801,12 @@ def upload():
             network=network,
             feederValidation=validation,
         )
+        uploaded_feeder = save_uploaded_feeder(
+            g.current_user["id"] if g.current_user else None,
+            uploaded_file.filename,
+            network,
+            validation,
+        )
         log_audit_event(
             "feeder_upload_success",
             details={
@@ -3525,6 +3823,7 @@ def upload():
             "network": network,
             "validation": validation,
             "is_inferred": bool(network.get("is_inferred")),
+            "uploadedFeeder": uploaded_feeder,
         })
 
     except ValidationError as exc:

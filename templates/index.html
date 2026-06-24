@@ -282,6 +282,22 @@
         </div>
     </div>
 
+    {% if current_permissions.can_manage_users %}
+    <div id="deleteUploadedFeederModal" class="modal hidden">
+        <div class="modal-backdrop" data-close="deleteUploadedFeederModal"></div>
+        <div class="modal-card form-card">
+            <div class="modal-head">
+                <div>
+                    <h3>Delete Uploaded Feeder</h3>
+                    <p class="viewer-meta">Choose one uploaded feeder mapping to remove.</p>
+                </div>
+                <button type="button" class="icon-btn" data-close="deleteUploadedFeederModal">Close</button>
+            </div>
+            <div id="deleteUploadedFeederList" class="uploaded-feeder-delete-list empty-state">Loading uploaded feeders...</div>
+        </div>
+    </div>
+    {% endif %}
+
     <script>
         window.currentUser = {{ current_user|tojson }};
         window.currentPermissions = {{ current_permissions|tojson }};

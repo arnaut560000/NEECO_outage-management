@@ -60,17 +60,17 @@
                 </div>
                 <form id="mobilePolSearchForm">
                     <label>
-                        <span>Uploaded feeder Pol ID</span>
-                        <select id="mobileWorkspacePoleSelect">
-                            <option value="">Loading uploaded feeder...</option>
+                        <span>Uploaded Feeder</span>
+                        <select id="mobileUploadedFeederSelect">
+                            <option value="">Loading uploaded feeders...</option>
                         </select>
                     </label>
-                    <input id="mobilePolSearchInput" type="search" placeholder="Enter Pol ID, feeder, or area">
+                    <input id="mobilePolSearchInput" type="search" placeholder="Search Pol ID in selected feeder">
                     <button type="submit">Search</button>
                 </form>
                 <div id="mobilePolSearchResult" class="mobile-pol-result">
                     <span>Ready</span>
-                    <strong>Select from uploaded feeder or search manually.</strong>
+                    <strong>Choose a feeder, then search the Pol ID.</strong>
                 </div>
             </article>
         </section>
@@ -109,20 +109,30 @@
             <div class="mobile-modal-handle" aria-hidden="true"></div>
             <div class="mobile-modal-head">
                 <div>
-                    <span class="mobile-eyebrow">Add interruption</span>
+                    <span id="mobileModalEyebrow" class="mobile-eyebrow">Add interruption</span>
                     <h2 id="mobileCreateTitle">Field interruption details</h2>
                 </div>
                 <button id="mobileCloseCreateBtn" type="button" aria-label="Close add interruption form">Close</button>
             </div>
             <form id="mobileCreateForm">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input id="mobileCreateFeederId" type="hidden" name="feeder_id">
+                <input id="mobileEditInterruptionId" type="hidden" name="interruption_id">
                 <label>
                     <span>Selected Pol ID</span>
                     <input id="mobileCreatePolId" name="pol_id" type="text" placeholder="Example: F12-001" required>
                 </label>
-                <label>
+                <label class="mobile-create-only-field">
                     <span>Affected Area</span>
                     <input name="affected_area" type="text" placeholder="Barangay / Sitio / Area">
+                </label>
+                <label>
+                    <span>Status</span>
+                    <select name="status">
+                        <option value="active">Active</option>
+                        <option value="scheduled">Scheduled</option>
+                        <option value="restored">Restored</option>
+                    </select>
                 </label>
                 <label>
                     <span>Cause</span>
@@ -138,7 +148,7 @@
                 </label>
                 <div class="mobile-modal-actions">
                     <button id="mobileCancelCreateBtn" type="button">Cancel</button>
-                    <button type="submit">Save Interruption</button>
+                    <button id="mobileSubmitInterruptionBtn" type="submit">Save Interruption</button>
                 </div>
             </form>
             <p id="mobileCreateHint">Saved reports appear in monitoring immediately.</p>

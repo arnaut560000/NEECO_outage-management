@@ -538,6 +538,36 @@ a.dashboard-link-btn {
     border-color: rgba(240, 173, 78, 0.4);
 }
 
+.workspace-recovery-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.workspace-recovery-actions .compact-btn {
+    min-height: 30px;
+    padding: 7px 11px;
+}
+
+.workspace-recovery-picker {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+}
+
+.workspace-recovery-picker select {
+    background: rgba(255, 255, 255, 0.94);
+    border: 1px solid rgba(217, 231, 199, 0.95);
+    border-radius: 999px;
+    color: #17351f;
+    font: inherit;
+    min-height: 32px;
+    min-width: 240px;
+    padding: 7px 11px;
+}
+
 .secondary-status {
     background: #edf8e7;
     border-color: #cde3b8;
@@ -4041,6 +4071,38 @@ body {
     box-shadow: var(--panel-glow);
 }
 
+.uploaded-feeder-delete-list {
+    display: grid;
+    gap: 10px;
+}
+
+.uploaded-feeder-delete-item {
+    align-items: center;
+    background: rgba(247, 250, 241, 0.9);
+    border: 1px solid rgba(217, 231, 199, 0.95);
+    border-radius: 12px;
+    display: flex;
+    gap: 12px;
+    justify-content: space-between;
+    padding: 12px;
+}
+
+.uploaded-feeder-delete-item div {
+    display: grid;
+    gap: 4px;
+}
+
+.uploaded-feeder-delete-item strong {
+    color: #14381f;
+}
+
+.uploaded-feeder-delete-item span,
+.uploaded-feeder-delete-item small {
+    color: #5e715d;
+    font-size: 12px;
+    font-weight: 700;
+}
+
 .map-stat,
 .validation-summary-card,
 .side-panel-summary-card {
@@ -5158,6 +5220,10 @@ body {
     gap: 6px;
 }
 
+.mobile-create-only-field.hidden {
+    display: none;
+}
+
 .mobile-filter-panel button {
     background: #36a268;
     color: #f8fff9;
@@ -5217,7 +5283,7 @@ body {
 
 .mobile-record-card {
     overflow: hidden;
-    padding: 14px;
+    padding: 16px;
 }
 
 .mobile-record-card.status-active {
@@ -5276,7 +5342,7 @@ body {
 
 .mobile-record-card dl {
     display: grid;
-    gap: 8px;
+    gap: 10px;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     margin: 14px 0 0;
 }
@@ -5287,8 +5353,8 @@ body {
     border-radius: 10px;
     display: grid;
     gap: 4px;
-    min-height: 58px;
-    padding: 8px;
+    min-height: 64px;
+    padding: 10px;
 }
 
 .mobile-record-card dd {
@@ -5321,13 +5387,16 @@ body {
 }
 
 .mobile-record-foot button {
-    background: #22372e;
-    border: 1px solid #405b4d;
-    color: #dff5e6;
+    background: #2d6f4a;
+    border: 1px solid #4d8b67;
+    color: #f3fff5;
     min-height: 38px;
 }
 
 .mobile-record-foot a {
+    background: #22372e;
+    border: 1px solid #405b4d;
+    color: #dff5e6;
     min-height: 38px;
 }
 

@@ -376,17 +376,31 @@ class OutageAppTestCase(unittest.TestCase):
                 "timings": {},
             },
         )
+        saved_feeder = self.app_module.save_uploaded_feeder(
+            user["id"],
+            "F12 SAMPLE.gpx",
+            {
+                "towers": [{"name": "F12-001"}],
+                "lines": [],
+                "validation": {"status": "ok", "summary": {}},
+            },
+            {"status": "ok", "summary": {}},
+        )
 
         workspace_response = self.client.get("/api/mobile/workspace-pol-ids")
         self.assertEqual(workspace_response.status_code, 200)
         workspace_payload = workspace_response.get_json()
         self.assertTrue(workspace_payload["success"])
-        self.assertEqual(workspace_payload["workspace"]["feederFileName"], "F12 SAMPLE.gpx")
-        self.assertEqual(workspace_payload["workspace"]["options"][0]["value"], "F12-001")
+        self.assertEqual(workspace_payload["workspace"]["feeders"][0]["filename"], "F12 SAMPLE.gpx")
+
+        search_response = self.client.get(f"/uploaded-feeders/{saved_feeder['id']}/search?q=F12-001")
+        self.assertEqual(search_response.status_code, 200)
+        self.assertEqual(search_response.get_json()["results"][0]["polId"], "F12-001")
 
         response = self.client.post(
             "/api/mobile/interruptions",
             json={
+                "feeder_id": saved_feeder["id"],
                 "pol_id": "F12-001",
                 "affected_area": "San Francisco",
                 "cause_of_interruption": "trees",
@@ -405,6 +419,42 @@ class OutageAppTestCase(unittest.TestCase):
         self.assertEqual(payload["mobile"]["records"][0]["selectedPolId"], "F12-001")
         self.assertEqual(payload["mobile"]["records"][0]["affectedArea"], "San Francisco")
         self.assertEqual(payload["mobile"]["records"][0]["customersAffected"], 1)
+
+    def test_uploaded_feeder_can_be_restored_and_deleted_by_admin(self):
+        admin = self._create_user("feeder-admin", role="admin")
+        csrf_token = self._login_via_session(admin["id"])
+        saved_feeder = self.app_module.save_uploaded_feeder(
+            admin["id"],
+            "F21 SAMPLE.gpx",
+            {
+                "towers": [{"name": "F21-001"}, {"name": "F21-002"}],
+                "lines": [{"start_index": 0, "end_index": 1}],
+                "validation": {"status": "ok", "summary": {}},
+            },
+            {"status": "ok", "summary": {}},
+        )
+
+        list_response = self.client.get("/uploaded-feeders")
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(list_response.get_json()["feeders"][0]["feederCode"], "F21")
+
+        restore_response = self.client.post(
+            f"/uploaded-feeders/{saved_feeder['id']}/restore",
+            headers={"X-CSRF-Token": csrf_token},
+        )
+        self.assertEqual(restore_response.status_code, 200)
+        restore_payload = restore_response.get_json()
+        self.assertTrue(restore_payload["success"])
+        self.assertEqual(restore_payload["workspace"]["feederFileName"], "F21 SAMPLE.gpx")
+        self.assertEqual(restore_payload["workspace"]["network"]["towers"][0]["name"], "F21-001")
+
+        delete_response = self.client.delete(
+            f"/uploaded-feeders/{saved_feeder['id']}",
+            headers={"X-CSRF-Token": csrf_token},
+        )
+        self.assertEqual(delete_response.status_code, 200)
+        self.assertEqual(delete_response.get_json()["feeder"]["feederCode"], "F21")
+        self.assertEqual(self.client.get("/uploaded-feeders").get_json()["feeders"], [])
 
     def test_dashboard_data_endpoint_filters_records(self):
         user = self._create_user("dashboard-filter-admin", role="admin")
