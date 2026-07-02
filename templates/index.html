@@ -58,7 +58,7 @@
 
                 <button id="refreshViewBtn" type="button" class="secondary-action top-control-btn">Refresh View</button>
                 <button id="validationReportBtn" type="button" class="secondary-action top-control-btn">View Validation Report</button>
-                <button id="clearWorkspaceBtn" type="button" class="secondary-action top-control-btn">Clear Current Workspace</button>
+                <button id="clearWorkspaceBtn" type="button" class="secondary-action top-control-btn">Clear Mapping</button>
                 <button id="addInterruptionBtn" type="button" class="secondary-action top-control-btn" {% if not current_permissions.can_edit_interruption %}disabled title="Your role is read-only."{% endif %}>Add Interruption</button>
             </div>
 
@@ -123,7 +123,7 @@
                 <div class="map-ops-panel">
                     <button id="zoomFeederBtn" type="button" class="line-visibility-btn">Zoom to Feeder</button>
                     <button id="zoomSelectedBtn" type="button" class="line-visibility-btn">Zoom to Selected Tower</button>
-                    <button id="clearAllBtn" type="button" class="line-visibility-btn danger-btn">Clear All Data</button>
+                    <button id="clearAllBtn" type="button" class="line-visibility-btn">Clear Mapping</button>
                 </div>
             </div>
             <div class="map-right-stack control-dock control-dock-right">

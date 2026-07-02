@@ -654,7 +654,6 @@ uploadForm.addEventListener("submit", async function (e) {
         await drawNetwork(networkData);
         enrichKmlFeaturesWithNetwork();
         await loadInterruptionsFromServer({ preserveActive: true });
-        hideWorkspaceRecoveryNotice();
         const warnings = networkData.validation?.warnings || [];
         const warningHtml = warnings.length
             ? `<div class="upload-warning"><strong>Warning:</strong> ${escapeHtml(warnings.join(" | "))}</div>`
@@ -719,7 +718,6 @@ xlsxUploadForm.addEventListener("submit", async function (e) {
         validationReports.xlsx = normalizeValidation(data.validation || accountData.validation);
         setPerformanceMode();
         clearMapHoverPreviewCache();
-        hideWorkspaceRecoveryNotice();
         setUploadButtonState(xlsxUploadButton, "success");
         xlsxStatusBox.innerHTML = `<strong>Success:</strong> ${escapeHtml(data.message)}${accountData?.serverBacked ? '<div class="upload-warning"><strong>Workspace mode:</strong> Account rows will load only when needed to keep the page stable.</div>' : ''}${getPerformanceModeHintHtml()}`;
 
@@ -802,7 +800,6 @@ kmlUploadForm.addEventListener("submit", async function (e) {
         setPerformanceMode();
         enrichKmlFeaturesWithNetwork();
         await drawKmlOverlay(kmlOverlayData);
-        hideWorkspaceRecoveryNotice();
         kmlStatusBox.innerHTML = `<strong>Success:</strong> ${escapeHtml(data.message)}${getPerformanceModeHintHtml()}`;
         setUploadButtonState(kmlUploadButton, "success");
         refreshViewerIfOpen();
@@ -901,24 +898,15 @@ deleteUploadedFeederList?.addEventListener("click", async function (event) {
 });
 
 async function handleWorkspaceClearRequest() {
-    const confirmed = confirm("This will clear only the current uploaded feeder, XLSX, and KML workspace. Saved interruptions will remain available.");
+    const confirmed = confirm("This will clear the current map view only. Uploaded GPX, XLSX, KML files and saved interruptions will remain available.");
     if (!confirmed) return;
 
     clearWorkspaceBtn.disabled = true;
     clearAllBtn.disabled = true;
     try {
-        workspaceRestoreToken += 1;
-        const response = await fetchWithTimeout("/workspace/current/clear", {
-            method: "POST",
-            headers: { "X-CSRF-Token": csrfToken },
-        });
-        const data = await readApiJson(response, "Failed to clear workspace.");
-        if (!data.success) {
-            throw new Error(data.message || "Failed to clear workspace.");
-        }
         clearAllData();
     } catch (err) {
-        alert(err.message || "Could not clear the current workspace. Your saved interruptions remain unchanged.");
+        alert(err.message || "Could not clear the current map view. Your uploaded files and saved interruptions remain unchanged.");
     } finally {
         clearWorkspaceBtn.disabled = false;
         clearAllBtn.disabled = false;
@@ -1441,14 +1429,16 @@ async function initializePageState() {
     await loadInterruptionsFromServer();
 }
 
-function applyDefaultWorkspaceLabels() {
+function applyDefaultWorkspaceLabels(options = {}) {
     selectedFileName.textContent = "No feeder file selected";
     selectedXlsxFileName.textContent = "No XLSX file selected";
     selectedKmlFileName.textContent = "No KML file selected";
     statusBox.innerHTML = "Waiting for feeder file upload...";
     xlsxStatusBox.innerHTML = "Waiting for XLSX upload...";
     kmlStatusBox.innerHTML = "Waiting for KML upload...";
-    hideWorkspaceRecoveryNotice();
+    if (!options.preserveRecoveryNotice) {
+        hideWorkspaceRecoveryNotice();
+    }
 }
 
 function applyWorkspaceStatusBoxes() {
@@ -1557,7 +1547,7 @@ function resetWorkspaceClientState(options = {}) {
     updateOperationalCounters();
 
     if (resetLabels) {
-        applyDefaultWorkspaceLabels();
+        applyDefaultWorkspaceLabels({ preserveRecoveryNotice });
         setUploadButtonState(feederUploadButton, "idle");
         setUploadButtonState(xlsxUploadButton, "idle");
         setUploadButtonState(kmlUploadButton, "idle");
@@ -2892,7 +2882,7 @@ function clearActiveSelectionState() {
 }
 
 function clearAllData() {
-    resetWorkspaceClientState({ resetMapView: true, resetLabels: true });
+    resetWorkspaceClientState({ resetMapView: true, resetLabels: true, preserveRecoveryNotice: true });
     fileInput.value = "";
     xlsxFileInput.value = "";
     kmlFileInput.value = "";
@@ -4682,16 +4672,6 @@ function getSidePanelAffectedPoleEntries(towers = []) {
     return getCanonicalAffectedPolIdEntries(towers);
 }
 
-function formatOutageDuration(minutes) {
-    const total = Math.max(0, Number(minutes) || 0);
-    if (!total) return "0 min";
-    const hours = Math.floor(total / 60);
-    const remainder = total % 60;
-    if (!hours) return `${remainder} min`;
-    if (!remainder) return `${hours} hr`;
-    return `${hours} hr ${remainder} min`;
-}
-
 function formatPhpCurrency(value) {
     const number = Number(value);
     if (!Number.isFinite(number)) return "PHP 0.00";
@@ -4742,17 +4722,15 @@ function getSidePanelMetrics(panelData = currentPanelData) {
     const filteredRows = filterConsumerRows(matchedRows);
     const polIds = affectedTowers.map((tower) => tower.name);
     const accounts = getUniqueAffectedAccounts(matchedRows);
+    const uniqueAccountRows = getUniqueAffectedAccountRows(matchedRows);
     const interruptionWindow = getSidePanelInterruptionWindow();
-    const totalAffectedConsumers = accounts.length || filteredRows.length || matchedRows.length;
-    const totalKwhr = getTotalAffectedKwhr(matchedRows);
+    const totalKwhr = getTotalAffectedKwhr(uniqueAccountRows);
     const startDateTime = interruptionWindow.startDate ? new Date(`${interruptionWindow.startDate}T${interruptionWindow.startTime || "00:00"}`) : null;
-    const endDateTime = interruptionWindow.endDate ? new Date(`${interruptionWindow.endDate}T${interruptionWindow.endTime || "00:00"}`) : null;
-    const rawDuration = startDateTime && endDateTime ? Math.floor((endDateTime.getTime() - startDateTime.getTime()) / 60000) : 0;
-    const outageDurationMinutes = Math.max(0, rawDuration || 0);
-    const daysInMonth = startDateTime ? new Date(startDateTime.getFullYear(), startDateTime.getMonth() + 1, 0).getDate() : 0;
+    const rateDate = startDateTime || new Date();
+    const daysInMonth = new Date(rateDate.getFullYear(), rateDate.getMonth() + 1, 0).getDate();
     const dsmRate = 2.0148;
-    const kwhrLoss = daysInMonth && outageDurationMinutes
-        ? ((((totalKwhr / daysInMonth) / 24) / 60) * outageDurationMinutes)
+    const kwhrLoss = daysInMonth
+        ? ((totalKwhr / daysInMonth) / 24)
         : 0;
     const kwhrLossPhp = kwhrLoss * dsmRate;
 
@@ -4762,10 +4740,9 @@ function getSidePanelMetrics(panelData = currentPanelData) {
         filteredRows,
         polIds,
         accounts,
+        uniqueAccountRows,
         interruptionWindow,
-        totalAffectedConsumers,
         totalKwhr,
-        outageDurationMinutes,
         kwhrLoss,
         kwhrLossPhp,
     };
@@ -4838,21 +4815,13 @@ function renderAffectedDashboard(panelData) {
             <div class="side-panel-section-head">
                 <div>
                     <h4 class="side-panel-section-title">KWHR Consumed</h4>
-                    <p class="side-panel-section-subtitle">Computed interruption summary values for the current selection.</p>
+                    <p class="side-panel-section-subtitle">Computed one-hour KWHR loss from matched consumer accounts.</p>
                 </div>
             </div>
             <div class="side-panel-summary-grid">
                 <div class="side-panel-summary-card">
-                    <span class="side-panel-summary-label">Total Affected Consumers</span>
-                    <strong class="side-panel-summary-value">${metrics.totalAffectedConsumers}</strong>
-                </div>
-                <div class="side-panel-summary-card">
                     <span class="side-panel-summary-label">Total KWHR Loss</span>
                     <strong class="side-panel-summary-value">${formatSummaryNumber(metrics.kwhrLoss, 4)}</strong>
-                </div>
-                <div class="side-panel-summary-card">
-                    <span class="side-panel-summary-label">Outage Duration</span>
-                    <strong class="side-panel-summary-value">${escapeHtml(formatOutageDuration(metrics.outageDurationMinutes))}</strong>
                 </div>
                 <div class="side-panel-summary-card">
                     <span class="side-panel-summary-label">KWHR Loss in PHP</span>
@@ -5082,6 +5051,28 @@ function getUniqueAffectedAccountCount(rows = []) {
             .map((row) => String(row?.account_number || "").trim())
             .filter(Boolean)
     ).size;
+}
+
+function getUniqueAffectedAccountRows(rows = []) {
+    const seen = new Set();
+    const uniqueRows = [];
+
+    rows.forEach((row, index) => {
+        const accountNumber = String(row?.account_number || "").trim().toUpperCase();
+        const fallbackKey = [
+            row?.pol_id,
+            row?.frombus_id,
+            row?.tobus_id,
+            row?.consumer_name,
+            index,
+        ].map((value) => String(value || "").trim().toUpperCase()).join("|");
+        const key = accountNumber || fallbackKey;
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        uniqueRows.push(row);
+    });
+
+    return uniqueRows;
 }
 
 function getTotalAffectedKwhr(rows = []) {
