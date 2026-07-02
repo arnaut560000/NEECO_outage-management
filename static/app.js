@@ -1478,6 +1478,11 @@ function showWorkspaceRecoveryNotice(message, options = {}) {
     const actions = Array.isArray(options.actions)
         ? options.actions
         : (options.buttonLabel ? [{ label: options.buttonLabel, onClick: options.onClick }] : []);
+    const hasPersistentRestoreActions = actions.some((action) => /restore/i.test(String(action?.label || "")));
+    const existingPersistent = workspaceRecoveryNotice.getAttribute("data-persistent-restore") === "1";
+    if (existingPersistent && !actions.length && !options.force) {
+        return;
+    }
     const actionHtml = actions.length
         ? `<div class="workspace-recovery-actions">${actions.map((action, index) => `
             <button type="button" class="secondary-action compact-btn ${action.danger ? "danger-btn" : ""}" data-workspace-recovery-action="${index}">${escapeHtml(action.label)}</button>
@@ -1487,6 +1492,11 @@ function showWorkspaceRecoveryNotice(message, options = {}) {
         <span>${escapeHtml(message)}</span>
         ${actionHtml}
     `;
+    if (hasPersistentRestoreActions) {
+        workspaceRecoveryNotice.setAttribute("data-persistent-restore", "1");
+    } else {
+        workspaceRecoveryNotice.removeAttribute("data-persistent-restore");
+    }
     workspaceRecoveryNotice.classList.remove("hidden-msg");
     actions.forEach((action, index) => {
         const button = workspaceRecoveryNotice.querySelector(`[data-workspace-recovery-action="${index}"]`);
@@ -1496,9 +1506,14 @@ function showWorkspaceRecoveryNotice(message, options = {}) {
     });
 }
 
-function hideWorkspaceRecoveryNotice() {
+function hideWorkspaceRecoveryNotice(options = {}) {
     if (!workspaceRecoveryNotice) return;
+    if (workspaceRecoveryNotice.getAttribute("data-persistent-restore") === "1" && !options.force) {
+        workspaceRecoveryNotice.classList.remove("hidden-msg");
+        return;
+    }
     workspaceRecoveryNotice.innerHTML = "";
+    workspaceRecoveryNotice.removeAttribute("data-persistent-restore");
     workspaceRecoveryNotice.classList.add("hidden-msg");
 }
 
