@@ -51,6 +51,10 @@ function Test-ServerRunning {
     }
 }
 
+if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+    throw "Python is not installed or is not added to PATH. Install Python 3, then run this launcher again."
+}
+
 Set-Location -LiteralPath $AppRoot
 New-Item -ItemType Directory -Force -Path $LogDir, $DataDir | Out-Null
 
@@ -59,10 +63,16 @@ Ensure-ServerEnv
 if (-not (Test-Path -LiteralPath $PythonExe)) {
     Write-Host "Creating Python virtual environment..."
     python -m venv (Join-Path $AppRoot ".venv")
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not create the Python virtual environment."
+    }
 }
 
 Write-Host "Installing/updating required packages..."
 & $PythonExe -m pip install -r (Join-Path $AppRoot "requirements.txt")
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not install required Python packages."
+}
 
 if (-not (Test-ServerRunning)) {
     Write-Host "Starting NEECO Outage Management..."
@@ -84,6 +94,7 @@ for ($attempt = 1; $attempt -le 30; $attempt++) {
 
 if (-not $started) {
     Write-Host "The server did not answer yet. Check logs\server.err.log for details."
+    Write-Host "Correct local URL: $Url"
     Write-Host "Press any key to close..."
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     exit 1
