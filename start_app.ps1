@@ -8,6 +8,10 @@ $DataDir = Join-Path $AppRoot "data"
 $LogDir = Join-Path $AppRoot "logs"
 $Port = "8080"
 $Url = "http://127.0.0.1:$Port"
+$LauncherOutLog = Join-Path $LogDir "launcher.out.log"
+$LauncherErrLog = Join-Path $LogDir "launcher.err.log"
+$ServerOutLog = Join-Path $LogDir "server.out.log"
+$ServerErrLog = Join-Path $LogDir "server.err.log"
 
 function New-SecretKey {
     $bytes = New-Object byte[] 48
@@ -56,6 +60,21 @@ function Test-ServerRunning {
     }
 }
 
+function Show-RecentLog {
+    param(
+        [string]$Path,
+        [string]$Title
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    Write-Host ""
+    Write-Host "==== $Title ===="
+    Get-Content -LiteralPath $Path -Tail 40
+}
+
 if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
     throw "Python is not installed or is not added to PATH. Install Python 3, then run this launcher again."
 }
@@ -81,15 +100,21 @@ if ($LASTEXITCODE -ne 0) {
 
 if (-not (Test-ServerRunning)) {
     Write-Host "Starting NEECO Outage Management..."
-    Start-Process `
+    Remove-Item -LiteralPath $LauncherOutLog, $LauncherErrLog -Force -ErrorAction SilentlyContinue
+    $serverProcess = Start-Process `
         -FilePath "powershell.exe" `
         -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$RunScript`"" `
         -WorkingDirectory $AppRoot `
-        -WindowStyle Hidden | Out-Null
+        -RedirectStandardOutput $LauncherOutLog `
+        -RedirectStandardError $LauncherErrLog `
+        -WindowStyle Hidden `
+        -PassThru
+} else {
+    $serverProcess = $null
 }
 
 $started = $false
-for ($attempt = 1; $attempt -le 30; $attempt++) {
+for ($attempt = 1; $attempt -le 90; $attempt++) {
     if (Test-ServerRunning) {
         $started = $true
         break
@@ -98,7 +123,14 @@ for ($attempt = 1; $attempt -le 30; $attempt++) {
 }
 
 if (-not $started) {
-    Write-Host "The server did not answer yet. Check logs\server.err.log for details."
+    Write-Host "The server did not answer yet."
+    if ($serverProcess -and $serverProcess.HasExited) {
+        Write-Host "Server process exited with code $($serverProcess.ExitCode)."
+    }
+    Show-RecentLog -Path $LauncherErrLog -Title "Launcher errors"
+    Show-RecentLog -Path $ServerErrLog -Title "Server errors"
+    Show-RecentLog -Path $LauncherOutLog -Title "Launcher output"
+    Show-RecentLog -Path $ServerOutLog -Title "Server output"
     Write-Host "Correct local URL: $Url"
     Write-Host "Press any key to close..."
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
