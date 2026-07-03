@@ -815,7 +815,8 @@ def _duration_loss_metrics(start_dt, duration_minutes, rows, dsm_rate=2.0148):
     if total_kwhr <= 0:
         return {"kwhr_loss": 0.0, "revenue_loss": 0.0}
     days_in_month = calendar.monthrange(start_dt.year, start_dt.month)[1]
-    kwhr_loss = (((total_kwhr / days_in_month) / 24) / 60) * duration_minutes
+    kwhr_loss_per_minute = ((total_kwhr / days_in_month) / 24) / 60
+    kwhr_loss = kwhr_loss_per_minute * duration_minutes
     return {
         "kwhr_loss": round(kwhr_loss, 4),
         "revenue_loss": round(kwhr_loss * float(dsm_rate or 0), 4),

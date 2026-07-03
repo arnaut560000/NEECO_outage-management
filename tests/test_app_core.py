@@ -328,6 +328,19 @@ class OutageAppTestCase(unittest.TestCase):
         self.assertNotEqual(dashboard["rows"][0]["estimatedKwhrLoss"], "0")
         self.assertNotEqual(dashboard["rows"][0]["estimatedRevenueLoss"], "0")
 
+    def test_dashboard_loss_metrics_are_duration_minutes_based(self):
+        start = datetime(2026, 5, 13, 8, 0)
+        rows = [{"kwhr": 24}]
+
+        one_minute = self.app_module._duration_loss_metrics(start, 1, rows)
+        sixty_minutes = self.app_module._duration_loss_metrics(start, 60, rows)
+        expected_one_hour_kwhr = (24 / 31) / 24
+        expected_one_hour_revenue = expected_one_hour_kwhr * 2.0148
+
+        self.assertAlmostEqual(one_minute["kwhr_loss"], round(expected_one_hour_kwhr / 60, 4), places=4)
+        self.assertAlmostEqual(sixty_minutes["kwhr_loss"], round(expected_one_hour_kwhr, 4), places=4)
+        self.assertAlmostEqual(sixty_minutes["revenue_loss"], round(expected_one_hour_revenue, 4), places=4)
+
     def test_due_scheduled_interruption_counts_as_active(self):
         user = self._create_user("scheduled-user", role="operator")
         csrf_token = self._login_via_session(user["id"])
