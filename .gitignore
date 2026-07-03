@@ -10,6 +10,7 @@ env/
 # Flask/runtime environment
 .env
 .flaskenv
+server.env
 instance/
 
 # Local SQLite databases and runtime state
@@ -21,11 +22,13 @@ instance/
 *.db-wal
 backups/
 workspace_cache/
+data/
 
 # Logs and generated files
 *.log
 *.tmp
 *.zip
+logs/
 
 # Node/Android wrapper
 node_modules/

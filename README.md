@@ -81,6 +81,58 @@ What the current tests cover:
 
 This app should not be deployed in production with `python app.py`.
 
+## Auto-Start Server PC Setup
+
+Use this when one Windows computer will act as the department server and should start the system automatically when the PC turns on, even before anyone logs in.
+
+Recommended folder:
+
+```text
+C:\NEECO\outage_management
+```
+
+From an elevated PowerShell window on the server PC:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\install_startup_task.ps1
+```
+
+The installer will:
+
+- create `.venv` if needed
+- install Python dependencies
+- create local `data`, `logs`, and `server.env`
+- register a Windows Scheduled Task named `NEECO Outage Management Server`
+- run the task as `SYSTEM` at computer startup, before user login
+- start Waitress on `0.0.0.0:8080`
+
+After installation, open the system on the server PC:
+
+```text
+http://127.0.0.1:8080
+```
+
+Other computers on the same network should open:
+
+```text
+http://SERVER-PC-IP:8080
+```
+
+The task uses `run_server.ps1`. Local server settings live in `server.env`, which is intentionally ignored by Git. Logs are written to `logs\server.out.log` and `logs\server.err.log`.
+
+To remove the auto-start task later, run PowerShell as administrator:
+
+```powershell
+.\uninstall_startup_task.ps1
+```
+
+Notes:
+
+- Keep the server project in a stable local folder. Avoid OneDrive/Desktop for the real server because boot-time tasks can run before OneDrive is ready.
+- If Windows Firewall blocks other computers, allow inbound TCP traffic on port `8080`.
+- The default auto-start setup is intended for internal LAN HTTP use. For HTTPS/IIS deployment, use the stricter production settings below.
+
 Preferred Windows deployment pattern:
 
 1. Prepare a service account or locked-down department Windows user.
