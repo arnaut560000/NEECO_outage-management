@@ -85,13 +85,37 @@ This app should not be deployed in production with `python app.py`.
 
 Use this when one Windows computer will act as the department server and should start the system automatically when the PC turns on, even before anyone logs in.
 
+For normal click-to-open use without typing commands, double-click:
+
+```text
+Start NEECO Outage Management.bat
+```
+
+That launcher creates the virtual environment if needed, installs requirements, starts the server in the background, and opens:
+
+```text
+http://127.0.0.1:8080
+```
+
+To stop a manually started server, double-click:
+
+```text
+Stop NEECO Outage Management.bat
+```
+
 Recommended folder:
 
 ```text
 C:\NEECO\outage_management
 ```
 
-From an elevated PowerShell window on the server PC:
+To make the server PC auto-run before anyone logs in, right-click this file and choose **Run as administrator**:
+
+```text
+Install Auto Start.bat
+```
+
+You can also run the installer manually from an elevated PowerShell window:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
