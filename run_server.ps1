@@ -54,4 +54,10 @@ $stdoutLog = Join-Path $LogDir "server.out.log"
 $stderrLog = Join-Path $LogDir "server.err.log"
 
 Set-Location -LiteralPath $AppRoot
+
+# Waitress writes normal startup messages to stderr. Older Windows PowerShell can
+# promote native stderr to a terminating error when ErrorActionPreference is Stop,
+# so relax it only around the long-running server process.
+$ErrorActionPreference = "Continue"
 & $PythonExe -m waitress --listen=$listen wsgi:app 1>> $stdoutLog 2>> $stderrLog
+exit $LASTEXITCODE
