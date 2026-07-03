@@ -11,7 +11,12 @@ $Url = "http://127.0.0.1:$Port"
 
 function New-SecretKey {
     $bytes = New-Object byte[] 48
-    [Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+    $rng = New-Object System.Security.Cryptography.RNGCryptoServiceProvider
+    try {
+        $rng.GetBytes($bytes)
+    } finally {
+        $rng.Dispose()
+    }
     return [Convert]::ToBase64String($bytes)
 }
 
