@@ -61,6 +61,28 @@ python app.py
 
 The local SQLite database, backups, and workspace cache are created automatically when the app starts. They are intentionally not included in the GitHub repository.
 
+## Android APK Download
+
+The debug Android installer is included in the repository at:
+
+```text
+releases/android/NEECO-Outage-Management-debug.apk
+```
+
+Copy that APK to an Android phone and install it. If Android blocks the install, allow installs from the file manager or browser you used to open the APK.
+
+To rebuild the APK from source:
+
+```powershell
+.\build_android_debug.ps1
+```
+
+After a successful rebuild, the generated APK is also available at:
+
+```text
+android\app\build\outputs\apk\debug\app-debug.apk
+```
+
 ## Running Tests
 
 Run the automated regression suite from the project folder:
